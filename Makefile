@@ -1,4 +1,4 @@
-PROJECTS := race_project
+PROJECTS := ECU1_Cockpit ECU2_Powertrain
 
 .PHONY: all clean $(PROJECTS)
 

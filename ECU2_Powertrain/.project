@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>race_project</name>
+	<name>ECU2_Powertrain</name>
 	<comment></comment>
 	<projects>
 	</projects>
@@ -36,3 +36,5 @@
 		</link>
 	</linkedResources>
 </projectDescription>
+
+

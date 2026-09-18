@@ -1,0 +1,14 @@
+# ChibiOS generated dependency and build output.
+**/.dep/
+**/build/
+
+# Firmware images and diagnostics.
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.dmp
+
+# ChibiStudio/Eclipse workspace state.
+.metadata/
