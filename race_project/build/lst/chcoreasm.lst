@@ -1,0 +1,607 @@
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 1
+
+
+   1              	# 1 "c:\\chibistudio\\chibios2111\\os\\common\\ports\\armv7-m-alt\\compilers\\gcc\\chcoreasm.s"
+   1              	/*
+   0              	
+   0              	
+   0              	
+   1              	/*
+   2              	    ChibiOS - Copyright (C) 2006,2007,2008,2009,2010,2011,2012,2013,2014,
+   3              	              2015,2016,2017,2018,2019,2020,2021 Giovanni Di Sirio.
+   4              	
+   5              	    This file is part of ChibiOS.
+   6              	
+   7              	    ChibiOS is free software; you can redistribute it and/or modify
+   8              	    it under the terms of the GNU General Public License as published by
+   9              	    the Free Software Foundation version 3 of the License.
+  10              	
+  11              	    ChibiOS is distributed in the hope that it will be useful,
+  12              	    but WITHOUT ANY WARRANTY; without even the implied warranty of
+  13              	    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  14              	    GNU General Public License for more details.
+  15              	
+  16              	    You should have received a copy of the GNU General Public License
+  17              	    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  18              	*/
+  19              	
+  20              	/**
+  21              	 * @file    ARMv7-M-ALT/compilers/GCC/chcoreasm.S
+  22              	 * @brief   ARMv7-M (alternate) architecture port low level code.
+  23              	 *
+  24              	 * @addtogroup ARMV7M_ALT_GCC_CORE
+  25              	 * @{
+  26              	 */
+  27              	
+  28              	#if !defined(FALSE) || defined(__DOXYGEN__)
+  29              	#define FALSE   0
+  30              	#endif
+  31              	
+  32              	#if !defined(TRUE) || defined(__DOXYGEN__)
+  33              	#define TRUE    1
+  34              	#endif
+  35              	
+  36              	#define _FROM_ASM_
+  37              	#include "chlicense.h"
+   1              	/*
+   2              	    ChibiOS - Copyright (C) 2006,2007,2008,2009,2010,2011,2012,2013,2014,
+   3              	              2015,2016,2017,2018,2019,2020,2021 Giovanni Di Sirio.
+   4              	
+   5              	    This file is part of ChibiOS.
+   6              	
+   7              	    ChibiOS is free software; you can redistribute it and/or modify
+   8              	    it under the terms of the GNU General Public License as published by
+   9              	    the Free Software Foundation version 3 of the License.
+  10              	
+  11              	    ChibiOS is distributed in the hope that it will be useful,
+  12              	    but WITHOUT ANY WARRANTY; without even the implied warranty of
+  13              	    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  14              	    GNU General Public License for more details.
+  15              	
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 2
+
+
+  16              	    You should have received a copy of the GNU General Public License
+  17              	    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  18              	*/
+  19              	
+  20              	/**
+  21              	 * @file    chlicense.h
+  22              	 * @brief   License Module macros and structures.
+  23              	 *
+  24              	 * @addtogroup chibios_license
+  25              	 * @details This module contains all the definitions required for defining
+  26              	 *          a licensing scheme for customers or public releases.
+  27              	 * @{
+  28              	 */
+  29              	
+  30              	#ifndef CHLICENSE_H
+  31              	#define CHLICENSE_H
+  32              	
+  33              	/*===========================================================================*/
+  34              	/* Module constants.                                                         */
+  35              	/*===========================================================================*/
+  36              	
+  37              	/**
+  38              	 * @name   Allowed Features Levels
+  39              	 * @{
+  40              	 */
+  41              	#define CH_FEATURES_BASIC                   0
+  42              	#define CH_FEATURES_INTERMEDIATE            1
+  43              	#define CH_FEATURES_FULL                    2
+  44              	/** @} */
+  45              	
+  46              	/**
+  47              	 * @name    Deployment Options
+  48              	 * @{
+  49              	 */
+  50              	#define CH_DEPLOY_UNLIMITED                -1
+  51              	#define CH_DEPLOY_NONE                      0
+  52              	/** @} */
+  53              	
+  54              	/**
+  55              	 * @name    Licensing Options
+  56              	 * @{
+  57              	 */
+  58              	#define CH_LICENSE_GPL                      0
+  59              	#define CH_LICENSE_GPL_EXCEPTION            1
+  60              	#define CH_LICENSE_COMMERCIAL_FREE          2
+  61              	#define CH_LICENSE_COMMERCIAL_DEV_1000      3
+  62              	#define CH_LICENSE_COMMERCIAL_DEV_5000      4
+  63              	#define CH_LICENSE_COMMERCIAL_FULL          5
+  64              	#define CH_LICENSE_COMMERCIAL_RUNTIME       6
+  65              	#define CH_LICENSE_PARTNER                  7
+  66              	/** @} */
+  67              	
+  68              	#include "chversion.h"
+   1              	/*
+  69              	#include "chcustomer.h"
+   1              	/*
+  70              	#if CH_LICENSE == CH_LICENSE_PARTNER
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 3
+
+
+  38              	#include "chconf.h"
+   1              	/*
+  39              	#include "chcore.h"
+   1              	/*
+   2              	    ChibiOS - Copyright (C) 2006,2007,2008,2009,2010,2011,2012,2013,2014,
+   3              	              2015,2016,2017,2018,2019,2020,2021 Giovanni Di Sirio.
+   4              	
+   5              	    This file is part of ChibiOS.
+   6              	
+   7              	    ChibiOS is free software; you can redistribute it and/or modify
+   8              	    it under the terms of the GNU General Public License as published by
+   9              	    the Free Software Foundation version 3 of the License.
+  10              	
+  11              	    ChibiOS is distributed in the hope that it will be useful,
+  12              	    but WITHOUT ANY WARRANTY; without even the implied warranty of
+  13              	    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  14              	    GNU General Public License for more details.
+  15              	
+  16              	    You should have received a copy of the GNU General Public License
+  17              	    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  18              	*/
+  19              	
+  20              	/**
+  21              	 * @file    ARMv7-M-ALT/chcore.h
+  22              	 * @brief   ARMv7-M (alternate) port macros and structures.
+  23              	 *
+  24              	 * @addtogroup ARMV7M_ALT_CORE
+  25              	 * @{
+  26              	 */
+  27              	
+  28              	#ifndef CHCORE_H
+  29              	#define CHCORE_H
+  30              	
+  31              	/* Inclusion of the Cortex-Mx implementation specific parameters.*/
+  32              	#include "cmparams.h"
+   1              	/*
+   2              	    ChibiOS - Copyright (C) 2006..2018 Giovanni Di Sirio
+   3              	
+   4              	    Licensed under the Apache License, Version 2.0 (the "License");
+   5              	    you may not use this file except in compliance with the License.
+   6              	    You may obtain a copy of the License at
+   7              	
+   8              	        http://www.apache.org/licenses/LICENSE-2.0
+   9              	
+  10              	    Unless required by applicable law or agreed to in writing, software
+  11              	    distributed under the License is distributed on an "AS IS" BASIS,
+  12              	    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  13              	    See the License for the specific language governing permissions and
+  14              	    limitations under the License.
+  15              	*/
+  16              	
+  17              	/**
+  18              	 * @file    STM32G4xx/cmparams.h
+  19              	 * @brief   ARM Cortex-M4 parameters for the STM32G4xx.
+  20              	 *
+  21              	 * @defgroup ARMCMx_STM32Gxx STM32Gxx Specific Parameters
+  22              	 * @ingroup ARMCMx_SPECIFIC
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 4
+
+
+  23              	 * @details This file contains the Cortex-M4 specific parameters for the
+  24              	 *          STM32G4xx platform.
+  25              	 * @{
+  26              	 */
+  27              	
+  28              	#ifndef CMPARAMS_H
+  29              	#define CMPARAMS_H
+  30              	
+  31              	/**
+  32              	 * @brief   Cortex core model.
+  33              	 */
+  34              	#define CORTEX_MODEL            4
+  35              	
+  36              	/**
+  37              	 * @brief   Floating Point unit presence.
+  38              	 */
+  39              	#define CORTEX_HAS_FPU          1
+  40              	
+  41              	/**
+  42              	 * @brief   Number of bits in priority masks.
+  43              	 */
+  44              	#define CORTEX_PRIORITY_BITS    4
+  45              	
+  46              	/* If the device type is not externally defined, for example from the Makefile,
+  47              	   then a file named board.h is included. This file must contain a device
+  48              	   definition compatible with the vendor include file.*/
+  49              	#if !defined(STM32G431xx) && !defined(STM32G441xx) &&                       \
+  50              	    !defined(STM32G471xx) && !defined(STM32G473xx) &&                       \
+  51              	    !defined(STM32G474xx) && !defined(STM32G483xx) &&                       \
+  52              	    !defined(STM32G484xx) && !defined(STM32GBK1CB) &&                       \
+  53              	    !defined(STM32G91xx)
+  54              	#include "board.h"
+   1              	/*
+  55              	#endif
+  33              	#include "mpu.h"
+   1              	/*
+  34              	
+  40              	
+  41              	#if !defined(__DOXYGEN__)
+  42              	
+  43              	/*
+  44              	 * RTOS-specific context offset.
+  45              	 */
+  46              	#if defined(_CHIBIOS_RT_CONF_)
+  47              	#define CURRENT_OFFSET  12
+  48              	#define CONTEXT_OFFSET  12
+  49              	
+  50              	#elif defined(_CHIBIOS_NIL_CONF_)
+  51              	#define CURRENT_OFFSET  0           /* nil.current */
+  52              	#define CONTEXT_OFFSET  0
+  53              	
+  54              	#else
+  55              	#error "invalid chconf.h"
+  56              	#endif
+  57              	
+  58              	/* MPU-related constants.*/
+  59              	#define MPU_RNR         0xE000ED98
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 5
+
+
+  60              	#define MPU_RBAR        0xE000ED9C
+  61              	
+  62              	                .syntax unified
+  63              	                .cpu    cortex-m4
+  64              	#if CORTEX_USE_FPU
+  65              	                .fpu    fpv4-sp-d16
+  66              	#else
+  67              	                .fpu    softvfp
+  68              	#endif
+  69              	
+  70              	                .thumb
+  71              	                .text
+  72              	
+  73              	/*--------------------------------------------------------------------------*
+  74              	 * Context switch macros depending on various options.
+  75              	 *--------------------------------------------------------------------------*/
+  76              	
+  77              	                /* Store integer context through R1.
+  78              	                   On entry R2=PSP, R3=BASEPRI, R12=CONTROL.*/
+  79              	                .macro  PORT_STORE_INTEGER_CONTEXT
+  80              	#if PORT_USE_SYSCALL
+  81              	                stmia   r1!, {r2-r12,lr}
+  82              	#else
+  83              	                stmia   r1!, {r2-r11,lr}
+  84              	#endif
+  85              	                .endm
+  86              	
+  87              	                /* Load integer context through R0.*/
+  88              	                .macro  PORT_LOAD_INTEGER_CONTEXT
+  89              	#if PORT_USE_SYSCALL
+  90              	                ldmia   r0!, {r2-r12, lr}
+  91              	                msr     PSP, r2
+  92              	                msr     BASEPRI, r3
+  93              	                msr     CONTROL, r12
+  94              	#else
+  95              	                ldmia   r0!, {r2-r11, lr}
+  96              	                msr     PSP, r2
+  97              	                msr     BASEPRI, r3
+  98              	#endif
+  99              	                .endm
+ 100              	
+ 101              	#if CORTEX_USE_FPU
+ 102              	                /* Store float context through R1.*/
+ 103              	                .macro  PORT_STORE_FLOAT_CONTEXT
+ 104              	                vstmia  r1!, {s16-s31}
+ 105              	                .endm
+ 106              	
+ 107              	                /* Load float context through R0.*/
+ 108              	                .macro  PORT_LOAD_FLOAT_CONTEXT
+ 109              	                vldmia  r0!, {s16-s31}
+ 110              	                .endm
+ 111              	#else
+ 112              	                .macro  PORT_STORE_FLOAT_CONTEXT
+ 113              	                .endm
+ 114              	
+ 115              	                .macro  PORT_LOAD_FLOAT_CONTEXT
+ 116              	                .endm
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 6
+
+
+ 117              	#endif
+ 118              	
+ 119              	                /* Store MPU context through R1.*/
+ 120              	                .macro  PORT_STORE_MPU_CONTEXT
+ 121              	#if PORT_SWITCHED_REGIONS_NUMBER == 1
+ 122              	                ldr     r2, =MPU_RBAR
+ 123              	                mov     r3, #0
+ 124              	                str     r3, [r2, #-4]       /* RNR */
+ 125              	                ldm     r2, {r4, r5}        /* RBAR0, RASR0 */
+ 126              	                stmia   r1!, {r4-r5}
+ 127              	#endif
+ 128              	#if PORT_SWITCHED_REGIONS_NUMBER == 2
+ 129              	                ldr     r2, =MPU_RBAR
+ 130              	                mov     r3, #0
+ 131              	                str     r3, [r2, #-4]       /* RNR */
+ 132              	                ldm     r2, {r4, r5}        /* RBAR0, RASR0 */
+ 133              	                add     r3, #1
+ 134              	                str     r3, [r2, #-4]       /* RNR */
+ 135              	                ldm     r2, {r6, r7}        /* RBAR1, RASR1 */
+ 136              	                stmia   r1!, {r4-r7}
+ 137              	#endif
+ 138              	#if PORT_SWITCHED_REGIONS_NUMBER == 3
+ 139              	                ldr     r2, =MPU_RBAR
+ 140              	                mov     r3, #0
+ 141              	                str     r3, [r2, #-4]       /* RNR */
+ 142              	                ldm     r2, {r4, r5}        /* RBAR0, RASR0 */
+ 143              	                add     r3, #1
+ 144              	                str     r3, [r2, #-4]       /* RNR */
+ 145              	                ldm     r2, {r6, r7}        /* RBAR1, RASR1 */
+ 146              	                add     r3, #1
+ 147              	                str     r3, [r2, #-4]       /* RNR */
+ 148              	                ldm     r2, {r8, r9}        /* RBAR2, RASR2 */
+ 149              	                stmia   r1!, {r4-r9}
+ 150              	#endif
+ 151              	#if PORT_SWITCHED_REGIONS_NUMBER == 4
+ 152              	                ldr     r2, =MPU_RBAR
+ 153              	                mov     r3, #0
+ 154              	                str     r3, [r2, #-4]       /* RNR */
+ 155              	                ldm     r2, {r4, r5}        /* RBAR0, RASR0 */
+ 156              	                add     r3, #1
+ 157              	                str     r3, [r2, #-4]       /* RNR */
+ 158              	                ldm     r2, {r6, r7}        /* RBAR1, RASR1 */
+ 159              	                add     r3, #1
+ 160              	                str     r3, [r2, #-4]       /* RNR */
+ 161              	                ldm     r2, {r8, r9}        /* RBAR2, RASR2 */
+ 162              	                add     r3, #1
+ 163              	                str     r3, [r2, #-4]       /* RNR */
+ 164              	                ldm     r2, {r10, r11}      /* RBAR3, RASR3 */
+ 165              	                stmia   r1!, {r4-r11}
+ 166              	#endif
+ 167              	                .endm
+ 168              	
+ 169              	                /* Load MPU context through R0.*/
+ 170              	                .macro  PORT_LOAD_MPU_CONTEXT
+ 171              	#if PORT_SWITCHED_REGIONS_NUMBER == 1
+ 172              	                ldr     r2, =MPU_RNR
+ 173              	                mov     r1, #0
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 7
+
+
+ 174              	                ldmia   r0!, {r3, r12}
+ 175              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR0, RASR0 */
+ 176              	#endif
+ 177              	#if PORT_SWITCHED_REGIONS_NUMBER == 2
+ 178              	                ldr     r2, =MPU_RNR
+ 179              	                mov     r1, #0
+ 180              	                ldmia   r0!, {r3, r12}
+ 181              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR0, RASR0 */
+ 182              	                mov     r1, #1
+ 183              	                ldmia   r0!, {r3, r12}
+ 184              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR1, RASR1 */
+ 185              	#endif
+ 186              	#if PORT_SWITCHED_REGIONS_NUMBER == 3
+ 187              	                ldr     r2, =MPU_RNR
+ 188              	                mov     r3, #0
+ 189              	                ldmia   r0!, {r3, r12}
+ 190              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR0, RASR0 */
+ 191              	                mov     r1, #1
+ 192              	                ldmia   r0!, {r3, r12}
+ 193              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR1, RASR1 */
+ 194              	                mov     r1, #2
+ 195              	                ldmia   r0!, {r3, r12}
+ 196              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR2, RASR2 */
+ 197              	#endif
+ 198              	#if PORT_SWITCHED_REGIONS_NUMBER == 4
+ 199              	                ldr     r2, =MPU_RNR
+ 200              	                mov     r3, #0
+ 201              	                ldmia   r0!, {r3, r12}
+ 202              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR0, RASR0 */
+ 203              	                mov     r1, #1
+ 204              	                ldmia   r0!, {r3, r12}
+ 205              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR1, RASR1 */
+ 206              	                mov     r1, #2
+ 207              	                ldmia   r0!, {r3, r12}
+ 208              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR2, RASR2 */
+ 209              	                mov     r1, #3
+ 210              	                ldmia   r0!, {r3, r12}
+ 211              	                stm     r2, {r1, r3, r12}   /* RNR, RBAR3, RASR3 */
+ 212              	#endif
+ 213              	                .endm
+ 214              	
+ 215              	/*--------------------------------------------------------------------------*
+ 216              	 * Performs a context switch between two threads using SVC.
+ 217              	 *--------------------------------------------------------------------------*/
+ 218              	                .thumb_func
+ 219              	                .globl  SVC_Handler
+ 220              	SVC_Handler:
+ 221 0000 EFF30982 	                mrs     r2, PSP
+ 222              	#if PORT_USE_SYSCALL
+ 223              	                mrs     r12, CONTROL
+ 224              	                tst     r12, #1
+ 225              	                beq     frompriv
+ 226              	                /* SVC called from non-privileged mode for a syscall.*/
+ 227              	                bic     r12, #1
+ 228              	                msr     CONTROL, r12        /* Switching to privileged. */
+ 229              	                /* Note, LR already contains the return address.*/
+ 230              	                ldr     r3, [r2, #24]       /* PC position. */
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 8
+
+
+ 231              	                ldrh    r0, [r3, #-2]       /* SVC opcode.  */
+ 232              	                and     r0, #255
+ 233              	                b       __port_do_syscall_entry
+ 234              	
+ 235              	frompriv:
+ 236              	                /* SVC called from privileged mode for unprivileged return.*/
+ 237              	                ldr     r3, [r2, #24]       /* PC position. */
+ 238              	                ldrh    r3, [r3, #-2]       /* SVC opcode.  */
+ 239              	                ands    r3, #255
+ 240              	                beq     ctxswitch
+ 241              	                /* Called for non-privileged mode change.*/
+ 242              	                orr     r12, #1
+ 243              	                msr     CONTROL, r12        /* Switching to non-privileged. */
+ 244              	                b       __port_do_syscall_return
+ 245              	
+ 246              	ctxswitch:
+ 247              	                /* SVC called from privilege mode for context switch.*/
+ 248              	#endif
+ 249              	                /* Context store for old thread through R1.*/
+ 250 0004 0C31     	                adds    r1, #CONTEXT_OFFSET
+ 251              	
+ 252 0006 EFF31183 	                mrs     r3, BASEPRI
+ 253              	                PORT_STORE_INTEGER_CONTEXT
+ 253              	> 
+ 253              	> 
+ 253              	> 
+ 253 000a A1E8FC4F 	>  stmia r1!,{r2-r11,lr}
+ 253              	> 
+ 254              	                PORT_STORE_FLOAT_CONTEXT
+ 255              	                PORT_STORE_MPU_CONTEXT
+ 255              	> 
+ 256              	
+ 257              	                /* Context load for new thread through R0.*/
+ 258 000e 0C30     	                adds    r0, #CONTEXT_OFFSET
+ 259              	
+ 260              	#if CH_DBG_SYSTEM_STATE_CHECK || CH_DBG_STATISTICS
+ 261              	                ldr     r3, [r0, #4]        /* BASEPRI offset */
+ 262              	                cmp     r3, #CORTEX_BASEPRI_DISABLED
+ 263              	                bne     1f
+ 264              	                mov     r4, r0
+ 265              	                /* Returning to a preempted thread, performing a logical
+ 266              	                   "unlock" and handling statistics.*/
+ 267              	#if CH_DBG_SYSTEM_STATE_CHECK
+ 268              	                bl      __dbg_check_unlock
+ 269              	#endif
+ 270              	#if CH_DBG_STATISTICS
+ 271              	                bl      __stats_stop_measure_crit_thd
+ 272              	#endif
+ 273              	                mov     r0, r4
+ 274              	1:
+ 275              	#endif /* CH_DBG_SYSTEM_STATE_CHECK || CH_DBG_STATISTICS */
+ 276              	
+ 277              	                PORT_LOAD_INTEGER_CONTEXT
+ 277              	> 
+ 277              	> 
+ 277              	> 
+ 277              	> 
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 9
+
+
+ 277              	> 
+ 277              	> 
+ 277 0010 B0E8FC4F 	>  ldmia r0!,{r2-r11,lr}
+ 277 0014 82F30988 	>  msr PSP,r2
+ 277 0018 83F31188 	>  msr BASEPRI,r3
+ 277              	> 
+ 278              	                PORT_LOAD_FLOAT_CONTEXT
+ 279              	                PORT_LOAD_MPU_CONTEXT
+ 279              	> 
+ 280              	
+ 281 001c 7047     	                bx      lr
+ 282              	
+ 283              	/*--------------------------------------------------------------------------*
+ 284              	 * Tail preemption check using PENDSV.
+ 285              	 *--------------------------------------------------------------------------*/
+ 286              	                .thumb_func
+ 287              	                .globl  PendSV_Handler
+ 288              	PendSV_Handler:
+ 289 001e EFF31183 	                mrs     r3, BASEPRI
+ 290 0022 08B5     	                push    {r3, lr}
+ 291              	
+ 292 0024 FFF7FEFF 	                bl      __port_schedule_next
+ 293 0028 0028     	                cmp     r0, #0
+ 294 002a 08BF     	                it      eq
+ 295 002c 08BD     	                popeq   {r3, pc}
+ 296 002e BDE80840 	                pop     {r3, lr}
+ 297              	
+ 298              	                /* Context store for old thread through R1.*/
+ 299 0032 0C31     	                adds    r1, #CONTEXT_OFFSET
+ 300              	
+ 301 0034 EFF30982 	                mrs     r2, PSP
+ 302              	#if PORT_USE_SYSCALL
+ 303              	                mrs     r12, CONTROL
+ 304              	#endif
+ 305              	                PORT_STORE_INTEGER_CONTEXT
+ 305              	> 
+ 305              	> 
+ 305              	> 
+ 305 0038 A1E8FC4F 	>  stmia r1!,{r2-r11,lr}
+ 305              	> 
+ 306              	                PORT_STORE_FLOAT_CONTEXT
+ 307              	                PORT_STORE_MPU_CONTEXT
+ 307              	> 
+ 308              	
+ 309              	                /* Context load for new thread through R0.*/
+ 310 003c 0C30     	                adds    r0, #CONTEXT_OFFSET
+ 311              	
+ 312              	#if CH_DBG_SYSTEM_STATE_CHECK || CH_DBG_STATISTICS
+ 313              	                ldr     r3, [r0, #4]        /* BASEPRI offset */
+ 314              	                cmp     r3, #CORTEX_BASEPRI_DISABLED
+ 315              	                bne     1f
+ 316              	                mov     r4, r0
+ 317              	                /* Returning to a preempted thread, performing a logical
+ 318              	                   "unlock" and handling statistics.*/
+ 319              	#if CH_DBG_SYSTEM_STATE_CHECK
+ 320              	                bl      __dbg_check_unlock
+ 321              	#endif
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 10
+
+
+ 322              	#if CH_DBG_STATISTICS
+ 323              	                bl      __stats_stop_measure_crit_thd
+ 324              	#endif
+ 325              	                mov     r0, r4
+ 326              	1:
+ 327              	#endif /* CH_DBG_SYSTEM_STATE_CHECK || CH_DBG_STATISTICS */
+ 328              	
+ 329              	                PORT_LOAD_INTEGER_CONTEXT
+ 329              	> 
+ 329              	> 
+ 329              	> 
+ 329              	> 
+ 329              	> 
+ 329              	> 
+ 329 003e B0E8FC4F 	>  ldmia r0!,{r2-r11,lr}
+ 329 0042 82F30988 	>  msr PSP,r2
+ 329 0046 83F31188 	>  msr BASEPRI,r3
+ 329              	> 
+ 330              	                PORT_LOAD_FLOAT_CONTEXT
+ 331              	                PORT_LOAD_MPU_CONTEXT
+ 331              	> 
+ 332              	
+ 333 004a 7047     	                bx      lr
+ 334              	
+ 335              	/*--------------------------------------------------------------------------*
+ 336              	 * Start a thread by invoking its work function.
+ 337              	 *
+ 338              	 * Threads execution starts here, the code leaves the system critical zone
+ 339              	 * and then jumps into the thread function passed in register R4. The
+ 340              	 * register R5 contains the thread parameter. The function chThdExit() is
+ 341              	 * called on thread function return.
+ 342              	 *--------------------------------------------------------------------------*/
+ 343              	                .thumb_func
+ 344              	                .globl  __port_thread_start
+ 345              	__port_thread_start:
+ 346              	#if PORT_ENABLE_GUARD_PAGES
+ 347              	                bl      __port_set_region
+ 348              	#endif
+ 349              	#if CH_DBG_SYSTEM_STATE_CHECK
+ 350              	                bl      __dbg_check_unlock
+ 351              	#endif
+ 352              	#if CH_DBG_STATISTICS
+ 353              	                bl      __stats_stop_measure_crit_thd
+ 354              	#endif
+ 355 004c 0023     	                movs    r3, #CORTEX_BASEPRI_DISABLED
+ 356 004e 83F31188 	                msr     BASEPRI, r3
+ 357 0052 2846     	                mov     r0, r5
+ 358 0054 A047     	                blx     r4
+ 359 0056 0020     	                movs    r0, #0              /* MSG_OK */
+ 360 0058 FFF7FEFF 	                bl      chThdExit
+ 361 005c FEE7     	.zombies:       b       .zombies
+ARM GAS  C:\Users\acest\AppData\Local\Temp\ccMoLXcg.s 			page 11
+
+
+DEFINED SYMBOLS
+../../../../../ChibiStudio/chibios2111/os/common/ports/ARMv7-M-ALT/compilers/GCC/chcoreasm.S:220    .text:00000000 SVC_Handler
+../../../../../ChibiStudio/chibios2111/os/common/ports/ARMv7-M-ALT/compilers/GCC/chcoreasm.S:221    .text:00000000 $t
+../../../../../ChibiStudio/chibios2111/os/common/ports/ARMv7-M-ALT/compilers/GCC/chcoreasm.S:288    .text:0000001e PendSV_Handler
+../../../../../ChibiStudio/chibios2111/os/common/ports/ARMv7-M-ALT/compilers/GCC/chcoreasm.S:345    .text:0000004c __port_thread_start
+../../../../../ChibiStudio/chibios2111/os/common/ports/ARMv7-M-ALT/compilers/GCC/chcoreasm.S:361    .text:0000005c .zombies
+
+UNDEFINED SYMBOLS
+__port_schedule_next
+chThdExit
