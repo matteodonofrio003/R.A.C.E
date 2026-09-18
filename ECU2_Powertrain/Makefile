@@ -71,16 +71,17 @@ LDSCRIPT = $(STARTUPLD)/STM32G474xE.ld
 
 CSRC = $(ALLCSRC) \
        $(TESTSRC) \
+       $(CHIBIOS)/os/hal/lib/streams/chprintf.c \
        main.c
 CPPSRC = $(ALLCPPSRC)
 ASMSRC = $(ALLASMSRC)
 ASMXSRC = $(ALLXASMSRC)
 
-INCDIR = $(CONFDIR) $(ALLINC) $(TESTINC)
+INCDIR = $(CONFDIR) $(ALLINC) $(TESTINC) $(CHIBIOS)/os/hal/lib/streams
 CWARN = -Wall -Wextra -Wundef -Wstrict-prototypes -Wcast-align=strict
 CPPWARN = -Wall -Wextra -Wundef
 
-UDEFS =
+UDEFS = -DCHPRINTF_USE_FLOAT=1
 UADEFS =
 UINCDIR =
 ULIBDIR =

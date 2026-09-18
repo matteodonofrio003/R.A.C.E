@@ -7,6 +7,8 @@
 #define JOYSTICK_CENTER          2048
 #define JOYSTICK_DEAD_ZONE       100
 #define JOYSTICK_MAX             100
+#define COCKPIT_PACKET_HEADER    0xAAAAU
+#define COCKPIT_PACKET_MSG_ID    0x010AU
 
 /*
  * The DMA writes one sample for each channel in the sequence:
@@ -20,6 +22,14 @@ volatile int32_t pedal_val;
 
 static volatile bool joystick_sample_ready;
 static volatile adcerror_t joystick_adc_last_error;
+
+typedef struct __attribute__((packed)) {
+  uint16_t header;
+  uint16_t msg_id;
+  int8_t steer_val;
+  int8_t pedal_val;
+  uint8_t crc;
+} CockpitPacket_t;
 
 static const SerialConfig serial_config = {
   115200U,
@@ -93,6 +103,17 @@ static int32_t joystick_normalize(adcsample_t raw) {
   return (magnitude > JOYSTICK_MAX) ? -JOYSTICK_MAX : -magnitude;
 }
 
+static uint8_t calculate_crc(const uint8_t *data, size_t length) {
+  uint8_t crc = 0U;
+
+  while (length > 0U) {
+    crc ^= *data++;
+    length--;
+  }
+
+  return crc;
+}
+
 static THD_WORKING_AREA(wa_joystick, 256);
 static THD_FUNCTION(JoystickThread, arg) {
   (void)arg;
@@ -109,8 +130,10 @@ static THD_FUNCTION(JoystickThread, arg) {
 
     if (joystick_sample_ready) {
       joystick_sample_ready = false;
+      chSysLock();
       steer_val = joystick_normalize(joystick_buffer[0]);
       pedal_val = joystick_normalize(joystick_buffer[1]);
+      chSysUnlock();
     }
 
     /*
@@ -124,24 +147,69 @@ static THD_FUNCTION(JoystickThread, arg) {
   }
 }
 
+static THD_WORKING_AREA(wa_cockpit_tx, 256);
+static THD_FUNCTION(CockpitTxThread, arg) {
+  CockpitPacket_t packet;
+
+  (void)arg;
+
+  while (true) {
+    int32_t steer;
+    int32_t pedal;
+
+    chSysLock();
+    steer = steer_val;
+    pedal = pedal_val;
+    chSysUnlock();
+
+    packet.header = COCKPIT_PACKET_HEADER;
+    packet.msg_id = COCKPIT_PACKET_MSG_ID;
+    packet.steer_val = (int8_t)steer;
+    packet.pedal_val = (int8_t)pedal;
+    packet.crc = calculate_crc((const uint8_t *)&packet,
+                               sizeof(CockpitPacket_t) - sizeof(packet.crc));
+
+    /*
+     * The timeout keeps the transmitter thread from waiting indefinitely if
+     * the serial driver is temporarily unable to accept data.
+     */
+    (void)chnWriteTimeout(&SD1, (const uint8_t *)&packet, sizeof(packet),
+                          TIME_MS2I(2));
+    chThdSleepMilliseconds(JOYSTICK_PERIOD_MS);
+  }
+}
+
 int main(void) {
   halInit();
   chSysInit();
 
   /*
-   * ST-LINK virtual COM port, USART2:
-   * PA2 = USART2_TX, PA3 = USART2_RX, alternate function 7.
+   * Inter-ECU UART: USART1, PC4 = TX and PC5 = RX.
+   * ST-LINK virtual COM port: USART2, PA2 = TX and PA3 = RX.
    */
+  palSetPadMode(GPIOC, 4U, PAL_MODE_ALTERNATE(7));
+  palSetPadMode(GPIOC, 5U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOA, 2U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOA, 3U, PAL_MODE_ALTERNATE(7));
+  sdStart(&SD1, &serial_config);
   sdStart(&SD2, &serial_config);
 
   chThdCreateStatic(wa_joystick, sizeof(wa_joystick), NORMALPRIO,
                     JoystickThread, NULL);
+  chThdCreateStatic(wa_cockpit_tx, sizeof(wa_cockpit_tx), NORMALPRIO,
+                    CockpitTxThread, NULL);
 
   while (true) {
+    int32_t steer;
+    int32_t pedal;
+
+    chSysLock();
+    steer = steer_val;
+    pedal = pedal_val;
+    chSysUnlock();
+
     chprintf((BaseSequentialStream *)&SD2, "steer=%ld pedal=%ld\r\n",
-             (long)steer_val, (long)pedal_val);
+             (long)steer, (long)pedal);
     chThdSleepMilliseconds(100);
   }
 }
