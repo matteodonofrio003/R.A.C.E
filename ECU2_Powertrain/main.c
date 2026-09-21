@@ -213,7 +213,8 @@ static THD_FUNCTION(TelemetryThread, arg) {
 
     /*
      * The Arduino cluster consumes a binary, packed nine-byte frame on a
-     * dedicated UART. Its bounded write timeout cannot delay vehicle physics.
+     * dedicated UART. The ESP32 gateway receives an identical frame over a
+     * second point-to-point UART. Bounded write timeouts protect scheduling.
      */
     cluster_packet.header = TELEMETRY_PACKET_HEADER;
     cluster_packet.rpm = rpm;
@@ -222,6 +223,8 @@ static THD_FUNCTION(TelemetryThread, arg) {
                                        sizeof(cluster_packet) -
                                        sizeof(cluster_packet.crc));
     (void)chnWriteTimeout(&SD3, (const uint8_t *)&cluster_packet,
+                          sizeof(cluster_packet), TIME_MS2I(2));
+    (void)chnWriteTimeout(&SD4, (const uint8_t *)&cluster_packet,
                           sizeof(cluster_packet), TIME_MS2I(2));
     chThdSleepMilliseconds(100);
   }
@@ -235,16 +238,19 @@ int main(void) {
    * Inter-ECU UART: USART1, PC4 = TX and PC5 = RX.
    * Debug UART: ST-LINK VCP via USART2, PA2 = TX and PA3 = RX.
    * Digital cluster UART: USART3 TX on PB10 (Arduino connector D6).
+   * Wi-Fi gateway UART: UART4 TX on PC10 (ST morpho connector).
    */
   palSetPadMode(GPIOC, 4U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOC, 5U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOA, 2U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOA, 3U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOB, 10U, PAL_MODE_ALTERNATE(7));
+  palSetPadMode(GPIOC, 10U, PAL_MODE_ALTERNATE(5));
 
   sdStart(&SD1, &ecu_serial_config);
   sdStart(&SD2, &ecu_serial_config);
   sdStart(&SD3, &cluster_serial_config);
+  sdStart(&SD4, &cluster_serial_config);
 
   chThdCreateStatic(wa_uart_receiver, sizeof(wa_uart_receiver), NORMALPRIO,
                     UartReceiverThread, NULL);
