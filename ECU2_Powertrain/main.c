@@ -4,6 +4,7 @@
 
 #define COCKPIT_PACKET_HEADER    0xAAAAU
 #define COCKPIT_PACKET_MSG_ID    0x010AU
+#define TELEMETRY_PACKET_HEADER  0xBBBBU
 
 #define ENGINE_RPM_IDLE          1000U
 #define ENGINE_RPM_MAX           8000U
@@ -23,6 +24,13 @@ typedef struct __attribute__((packed)) {
   uint8_t crc;
 } CockpitPacket_t;
 
+typedef struct __attribute__((packed)) {
+  uint16_t header;
+  uint16_t rpm;
+  float speed_kmh;
+  uint8_t crc;
+} TelemetryPacket_t;
+
 volatile int8_t target_steer;
 volatile int8_t target_pedal;
 volatile uint16_t engine_rpm = ENGINE_RPM_IDLE;
@@ -32,6 +40,13 @@ volatile uint32_t cockpit_rx_invalid_packets;
 
 static const SerialConfig ecu_serial_config = {
   115200U,
+  0U,
+  USART_CR2_STOP1_BITS,
+  0U
+};
+
+static const SerialConfig cluster_serial_config = {
+  38400U,
   0U,
   USART_CR2_STOP1_BITS,
   0U
@@ -181,6 +196,7 @@ static THD_FUNCTION(TelemetryThread, arg) {
     float speed;
     uint32_t valid_packets;
     uint32_t invalid_packets;
+    TelemetryPacket_t cluster_packet;
 
     chSysLock();
     pedal = target_pedal;
@@ -194,6 +210,19 @@ static THD_FUNCTION(TelemetryThread, arg) {
              "Pedal: %d%% | RPM: %d | Speed: %.1f km/h | RX: %lu/%lu\r\n",
              (int)pedal, (int)rpm, (double)speed,
              (unsigned long)valid_packets, (unsigned long)invalid_packets);
+
+    /*
+     * The Arduino cluster consumes a binary, packed nine-byte frame on a
+     * dedicated UART. Its bounded write timeout cannot delay vehicle physics.
+     */
+    cluster_packet.header = TELEMETRY_PACKET_HEADER;
+    cluster_packet.rpm = rpm;
+    cluster_packet.speed_kmh = speed;
+    cluster_packet.crc = calculate_crc((const uint8_t *)&cluster_packet,
+                                       sizeof(cluster_packet) -
+                                       sizeof(cluster_packet.crc));
+    (void)chnWriteTimeout(&SD3, (const uint8_t *)&cluster_packet,
+                          sizeof(cluster_packet), TIME_MS2I(2));
     chThdSleepMilliseconds(100);
   }
 }
@@ -205,14 +234,17 @@ int main(void) {
   /*
    * Inter-ECU UART: USART1, PC4 = TX and PC5 = RX.
    * Debug UART: ST-LINK VCP via USART2, PA2 = TX and PA3 = RX.
+   * Digital cluster UART: USART3 TX on PB10 (Arduino connector D6).
    */
   palSetPadMode(GPIOC, 4U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOC, 5U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOA, 2U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOA, 3U, PAL_MODE_ALTERNATE(7));
+  palSetPadMode(GPIOB, 10U, PAL_MODE_ALTERNATE(7));
 
   sdStart(&SD1, &ecu_serial_config);
   sdStart(&SD2, &ecu_serial_config);
+  sdStart(&SD3, &cluster_serial_config);
 
   chThdCreateStatic(wa_uart_receiver, sizeof(wa_uart_receiver), NORMALPRIO,
                     UartReceiverThread, NULL);
