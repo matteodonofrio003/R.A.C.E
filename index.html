@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>R.A.C.E. | Apex Circuit</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root { color-scheme: dark; --lime: #dcff74; --muted: #becbc9; }
+    * { box-sizing: border-box; }
+    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#142429; color:#fafaf4; font:14px Inter,"Segoe UI",sans-serif; }
+    #scene { position:fixed; inset:0; } #scene canvas { display:block; }
+    .shade { position:fixed; inset:0; pointer-events:none; background:linear-gradient(#06121680,transparent 25%,transparent 75%,#061216a0); }
+    #hud { position:fixed; inset:0; padding:28px; display:flex; flex-direction:column; justify-content:space-between; pointer-events:none; }
+    header,footer,.row { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+    h1 { margin:0; font-size:27px; letter-spacing:.15em; font-style:italic; }
+    h1 span { color:var(--lime); } .eyebrow { color:var(--muted); font-size:10px; letter-spacing:.15em; text-transform:uppercase; }
+    .glass { background:#10262ec7; border:1px solid #ffffff25; border-radius:15px; backdrop-filter:blur(14px); box-shadow:0 12px 35px #0002; }
+    #status { padding:12px 18px; color:var(--lime); font-size:12px; }
+    .timing { position:absolute; left:28px; top:115px; width:245px; padding:20px; }
+    .timing h2 { font-size:21px; margin:0 0 20px; } #lap-time { font-size:33px; font-variant-numeric:tabular-nums; font-weight:650; }
+    .stats { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:20px; }
+    .stats b { display:block; margin-top:5px; font-size:16px; font-variant-numeric:tabular-nums; }
+    #lap-state { font-size:11px; margin-top:16px; color:var(--lime); }
+    #map { position:absolute; right:28px; top:98px; width:195px; height:170px; }
+    footer { align-items:flex-end; }
+    .speedometer { width:265px; padding:20px; }
+    #speed { font-size:75px; line-height:1.2; font-weight:750; letter-spacing:-.06em; font-variant-numeric:tabular-nums; }
+    #gear { display:inline-grid; place-items:center; border:1px solid #dcff7470; color:var(--lime); width:47px; height:54px; font-size:32px; border-radius:8px; }
+    .bar { height:4px; background:#fff2; margin:12px 0; } #rpm-bar { height:100%; background:var(--lime); transform-origin:left; transform:scaleX(0); }
+    .controls { max-width:420px; text-align:right; pointer-events:auto; }
+    #notice { line-height:1.5; color:#e4e9de; font-size:12px; margin-bottom:12px; }
+    button { background:#10262ecc; color:#fff; border:1px solid #ffffff50; border-radius:7px; padding:11px 13px; cursor:pointer; margin:3px; font:inherit; font-size:11px; }
+    button:hover,button:focus-visible { border-color:var(--lime); }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    button[aria-pressed="true"] { background:var(--lime); color:#152715; }
+    #warning { position:absolute; top:30%; left:50%; transform:translateX(-50%); background:#ba4216d9; border:1px solid #ffc38d; border-radius:8px; padding:13px 24px; font-weight:700; letter-spacing:.15em; display:none; }
+    #model-credit { display:block; margin-top:9px; font-size:9px; color:var(--muted); }
+    a { color:inherit; } #error { display:none; position:fixed; top:40%; left:15%; right:15%; padding:25px; }
+    #setup { position:fixed; right:24px; top:80px; width:310px; max-height:75vh; overflow:auto; padding:22px; z-index:8; }
+    #setup[hidden] { display:none; }
+    #setup label { display:block; margin:14px 0; font-size:12px; }
+    #setup input[type="range"] { display:block; width:100%; margin-top:8px; accent-color:var(--lime); }
+    #setup p { font-size:12px; line-height:1.5; }
+    #diagnostic { color:var(--lime); }
+    #audio-toggle[aria-pressed="true"] { background:var(--lime); color:#152715; }
+    @media(max-width:700px) {
+      #hud { padding:14px; } h1 { font-size:19px; } #status { font-size:10px; padding:10px; }
+      .timing { left:14px; top:90px; width:175px; padding:13px; } .timing h2 { font-size:16px; margin-bottom:12px; }
+      #lap-time { font-size:24px; } .stats { gap:12px; margin-top:12px; } .stats b { font-size:12px; }
+      #map { right:12px; top:85px; width:145px; height:125px; }
+      .speedometer { width:170px; padding:13px; flex-shrink:0; } #speed { font-size:53px; }
+      #gear { width:33px; height:41px; font-size:24px; } .controls { max-width:185px; } #notice { font-size:10px; }
+      footer { gap:9px; } button { padding:9px; font-size:10px; } #model-credit { font-size:8px; }
+      #warning { top:42%; padding:10px; font-size:11px; }
+    }
+    @media(max-height:550px) { .timing { top:76px; width:200px; } .timing h2,#map { display:none; } .stats { gap:7px; } }
+  </style>
+  <script type="importmap">
+    {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}
+  </script>
+</head>
+<body>
+  <div id="scene"></div><div class="shade"></div>
+  <main id="hud">
+    <header><div><h1><span>///</span> R.A.C.E.</h1><span class="eyebrow">Apex Circuit / Hardware in the loop</span></div><div id="status" class="glass" role="status">Loading graphics</div></header>
+    <section class="timing glass">
+      <h2>APEX / TIME ATTACK</h2><div class="eyebrow">Current lap</div><div id="lap-time">00:00.000</div>
+      <div class="stats">
+        <div><span class="eyebrow">Completed laps</span><b id="laps">0</b></div>
+        <div><span class="eyebrow">Session average</span><b id="average">0.0 km/h</b></div>
+        <div><span class="eyebrow">Last lap</span><b id="last-lap">--:--.---</b></div>
+        <div><span class="eyebrow">Best valid lap</span><b id="best-lap">--:--.---</b></div>
+      </div><div id="lap-state">Ready on the grid</div>
+    </section>
+    <canvas id="map" width="390" height="340" class="glass" aria-label="Circuit map"></canvas>
+    <div id="warning" role="status">OFF TRACK</div>
+    <footer>
+      <section class="speedometer glass"><div class="eyebrow" id="mode">Hardware control</div><div class="row"><div><span id="speed">0</span> <span class="eyebrow">km/h</span></div><span id="gear">1</span></div><div class="bar"><div id="rpm-bar"></div></div><div class="eyebrow">RPM <span id="rpm">1000</span> / 8000</div></section>
+      <section class="controls"><div id="notice">Loading the circuit and car...</div>
+        <button id="demo" aria-pressed="false">Keyboard demo</button><button id="recover">Return to track [R]</button><button id="restart">New session</button><button id="setup-toggle" aria-expanded="false">Controls / diagnostics</button><button id="audio-toggle" aria-pressed="false">Enable audio</button><button id="fullscreen">Fullscreen</button>
+        <a id="model-credit" href="https://threejs.org/examples/webgl_materials_car.html" target="_blank" rel="noopener">Ferrari 458 Italia model: vicent091036 / Three.js example</a>
+      </section>
+    </footer>
+  </main>
+  <section id="setup" class="glass" hidden aria-label="Controls and diagnostics">
+    <button id="setup-close">Close</button>
+    <label>Sensitivity <output id="sensitivity-value">0.80</output><input id="sensitivity" type="range" min="0.4" max="1.4" step="0.05" value="0.8"></label>
+    <label>Additional deadzone <output id="deadzone-value">3%</output><input id="deadzone" type="range" min="0" max="12" step="1" value="3"></label>
+    <label><input id="invert" type="checkbox"> Reverse steering direction</label>
+    <button id="calibrate">Center joystick</button>
+    <p id="calibration-status">Stop the car and release the stick before centering.</p>
+    <p id="steering-values">Input: 0% / output: 0%</p>
+    <label>Audio volume<input id="volume" type="range" min="0" max="1" step="0.05" value="0.35"></label>
+    <p id="diagnostic">Waiting for hardware diagnostics.</p>
+    <button id="buzzer-test">Test Arduino buzzer (1 s)</button>
+    <p>Return UART: ESP32 GPIO14 to ECU2 PC11. Buzzer: Arduino D7 to GND.</p>
+  </section>
+  <div id="error" class="glass" role="alert"></div>
+  <script type="module">
+    import('./racing-game.mjs').catch(error => {
+      console.error(error);
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('error').textContent = 'Graphics could not load. Open with Live Server and Internet access before joining HIL_Telemetry. WebGL2 must be enabled.';
+    });
+  </script>
+</body>
+</html>

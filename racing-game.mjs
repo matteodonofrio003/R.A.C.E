@@ -1,0 +1,411 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { clamp, decodeTelemetry, driveStep, nearestTrack, LapTimer, formatTime, shapeSteering, SessionReset, GEAR_LIMITS, GEAR_ACCEL } from './racing-core.mjs';
+import { RacingAudio } from './racing-audio.mjs';
+import { addScenery } from './racing-scenery.mjs';
+
+const $ = id => document.getElementById(id);
+const keys = new Set();
+const timing = new LapTimer();
+const input = { speed: 0, steer: 0, gear: 1, rpm: 1000, cockpit: false, session: 0, feedback: false, alarm: false };
+const resetGate = new SessionReset(), audio = new RacingAudio(), steeringSamples = [];
+const settings = { center: 0, deadzone: 3, sensitivity: .8, invert: false };
+let testAlarmUntil = 0;
+try {
+  const saved = JSON.parse(localStorage.getItem('race-controls-v3'));
+  if (saved && Number.isFinite(saved.center) && Math.abs(saved.center) <= 30 &&
+      Number.isFinite(saved.deadzone) && saved.deadzone >= 0 && saved.deadzone <= 12 &&
+      Number.isFinite(saved.sensitivity) && saved.sensitivity >= .4 && saved.sensitivity <= 1.4 &&
+      typeof saved.invert === 'boolean') Object.assign(settings, saved);
+} catch { /* Storage may be unavailable on a restricted browser. */ }
+let demo = false, demoSpeed = 0, demoGear = 1, lastPacket = -Infinity;
+let connected = false, socket, reconnectTimer, connectTimer, retry = 1000, stopped = false;
+let offtrack = false, speed = 0, steer = 0, paused = false;
+const carState = { x: 0, z: 0, heading: 0, wheelAngle: 0 };
+const HALF_WIDTH = 10;
+const fresh = () => connected && input.cockpit && performance.now() - lastPacket < 700;
+
+function connect() {
+  if (stopped) return;
+  try {
+    socket = new WebSocket('ws://192.168.4.1/ws');
+    connectTimer = setTimeout(() => { if (socket.readyState === 0) socket.close(); }, 6000);
+    socket.onopen = () => { connected = true; retry = 1000; clearTimeout(connectTimer); };
+    socket.onmessage = e => {
+      const packet = decodeTelemetry(e.data);
+      if (packet) {
+        Object.assign(input, packet); lastPacket = performance.now();
+        if (!demo) resetGate.observe(packet);
+        steeringSamples.push({ time: lastPacket, value: packet.steer });
+        while (steeringSamples.length && steeringSamples[0].time < lastPacket - 1500) steeringSamples.shift();
+      }
+    };
+    socket.onerror = () => socket.close();
+    socket.onclose = () => {
+      connected = false; lastPacket = -Infinity;
+      clearTimeout(connectTimer);
+      if (!stopped) reconnectTimer = setTimeout(connect, retry);
+      retry = Math.min(8000, retry * 1.5);
+    };
+  } catch {
+    if (!stopped) reconnectTimer = setTimeout(connect, 2000);
+  }
+}
+function feedback(value) {
+  const session = demo ? input.session : resetGate.token;
+  if (socket?.readyState === 1 && session !== null && performance.now() - lastPacket < 700) {
+    socket.send(JSON.stringify({ offtrack: value, session }));
+  }
+}
+// The hardware alarm is leased: demo, hidden tabs and stale input always send false.
+const heartbeat = setInterval(() => feedback(!demo && fresh() && !resetGate.pending &&
+  (offtrack || performance.now() < testAlarmUntil) && !document.hidden), 100);
+connect();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = .98;
+$('scene').appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#c8c1a9');
+scene.fog = new THREE.Fog('#c8c1a9', 160, 850);
+const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, .1, 1800);
+scene.add(new THREE.HemisphereLight('#d5eaff', '#595d3c', 1.3));
+const sun = new THREE.DirectionalLight('#ffe1b0', 2.6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 50, bottom: -50, near: 1, far: 180 });
+sun.shadow.normalBias = .025;
+scene.add(sun, sun.target);
+const sky = new THREE.Mesh(new THREE.SphereGeometry(1400, 32, 16), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false,
+  vertexShader: 'varying vec3 p;void main(){p=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+  fragmentShader: 'varying vec3 p;void main(){float h=normalize(p).y;gl_FragColor=vec4(mix(vec3(.82,.63,.42),vec3(.12,.34,.52),smoothstep(0.,.8,h)),1.);\n#include <tonemapping_fragment>\n#include <colorspace_fragment>\n}'
+}));
+scene.add(sky);
+const environmentScene = new THREE.Scene();
+environmentScene.add(sky.clone());
+const pmrem = new THREE.PMREMGenerator(renderer);
+const environment = pmrem.fromScene(environmentScene, .06, .1, 1800);
+scene.environment = environment.texture;
+pmrem.dispose();
+
+let seed = 147;
+function random() { seed = (1664525 * seed + 1013904223) >>> 0; return seed / 4294967296; }
+const material = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: .8, ...extra });
+const cube = new THREE.BoxGeometry(1, 1, 1);
+function box(parent, mat, size, pos, shadows = true) {
+  const mesh = new THREE.Mesh(cube, mat);
+  mesh.scale.set(...size); mesh.position.set(...pos);
+  mesh.castShadow = shadows; mesh.receiveShadow = true; parent.add(mesh);
+  return mesh;
+}
+const roadCurve = new THREE.CatmullRomCurve3([
+  [0,0], [0,-250], [130,-380], [400,-330], [490,-100],
+  [330,80], [420,290], [160,400], [-60,320], [0,180]
+].map(([x,z]) => new THREE.Vector3(x,0,z)), true, 'centripetal');
+const length = roadCurve.getLength();
+const points = roadCurve.getSpacedPoints(768).slice(0, -1);
+const scenery=addScenery(scene, points);
+const normals = points.map((p,i) => {
+  const tangent = points[(i + 1) % points.length].clone().sub(points[(i - 1 + points.length) % points.length]).normalize();
+  return new THREE.Vector3(-tangent.z, 0, tangent.x);
+});
+function ribbon(left, right, height, mat, kerb = false) {
+  const positions = [], uvs = [], colors = [], indices = [];
+  const red = new THREE.Color('#de4f32'), white = new THREE.Color('#f7efda');
+  for (let i = 0; i <= points.length; i++) {
+    const p = points[i % points.length], n = normals[i % points.length];
+    const color = Math.floor(i / 2) % 2 ? red : white;
+    for (const [edge, u] of [[left,0],[right,1]]) {
+      positions.push(p.x + n.x * edge, height, p.z + n.z * edge);
+      uvs.push(u * 4, i / points.length * length / 6);
+      colors.push(color.r, color.g, color.b);
+    }
+    if (i < points.length) { const a = i * 2; indices.push(a,a+1,a+2,a+1,a+3,a+2); }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs,2));
+  if (kerb) geometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
+  geometry.setIndex(indices); geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry,mat); mesh.receiveShadow = true; scene.add(mesh);
+}
+const asphaltCanvas = document.createElement('canvas');
+asphaltCanvas.width = asphaltCanvas.height = 128;
+const ctx = asphaltCanvas.getContext('2d');
+const noise = ctx.createImageData(128,128);
+for (let i = 0; i < noise.data.length; i += 4) {
+  const v = 50 + random() * 28;
+  noise.data.set([v,v + 2,v + 3,255],i);
+}
+ctx.putImageData(noise,0,0);
+const asphaltTexture = new THREE.CanvasTexture(asphaltCanvas);
+asphaltTexture.wrapS = asphaltTexture.wrapT = THREE.RepeatWrapping;
+asphaltTexture.colorSpace = THREE.SRGBColorSpace;
+asphaltTexture.anisotropy = Math.min(8,renderer.capabilities.getMaxAnisotropy());
+box(scene,material('#6f8153'),[2500,.2,2500],[150,-.16,0],false);
+ribbon(-15,15,.01,material('#b4ab87'));
+ribbon(-10,10,.035,material('#ffffff',{map:asphaltTexture,roughness:.94}));
+ribbon(-11,-10,.05,material('#ffffff',{vertexColors:true}),true);
+ribbon(10,11,.05,material('#ffffff',{vertexColors:true}),true);
+const white = material('#fff3d8');
+ribbon(-9.5,-9.35,.045,white); ribbon(9.35,9.5,.045,white);
+
+// Shared instanced geometry keeps vegetation draw calls bounded.
+const trees = new THREE.InstancedMesh(new THREE.ConeGeometry(1,1,8),material('#2f5842'),240);
+const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(.17,.25,1,5),material('#615244'),240);
+const dummy = new THREE.Object3D();
+for (let i = 0; i < 240; i++) {
+  let x, z;
+  do { x = -250 + random() * 1000; z = -570 + random() * 1150; }
+  while (nearestTrack(points,x,z).distance < 23 || Math.hypot(x-205,z-5)<85 ||
+    (x<0&&x>-90&&z>-130&&z<80));
+  const h = 5 + random() * 8;
+  dummy.position.set(x,scenery.heightAt(x,z)+h * .65,z); dummy.scale.set(h * .35,h,h * .35); dummy.updateMatrix(); trees.setMatrixAt(i,dummy.matrix);
+  dummy.position.y = scenery.heightAt(x,z)+h * .25; dummy.scale.set(1,h * .5,1); dummy.updateMatrix(); trunks.setMatrixAt(i,dummy.matrix);
+}
+trees.castShadow = trunks.castShadow = true; scene.add(trees,trunks);
+const mountainMaterial = material('#6e827e',{flatShading:true});
+const mountainGeometry = new THREE.ConeGeometry(1,1,7);
+for (let i = 0; i < 35; i++) {
+  const angle = i / 35 * Math.PI * 2, h = 80 + random() * 130;
+  const mountain = new THREE.Mesh(mountainGeometry,mountainMaterial);
+  mountain.position.set(170 + Math.cos(angle) * 900,h / 2 - 10,Math.sin(angle) * 950);
+  mountain.scale.set(100 + random()*80,h,100 + random()*80); scene.add(mountain);
+}
+const concrete = material('#bcc2b6'), metal = material('#28383b',{metalness:.5,roughness:.4});
+for (let i = 0; i < 8; i++) {
+  box(scene,concrete,[12,5,11],[-29,2.5,-80 + i*12]);
+  box(scene,metal,[.08,3.5,8],[-22.95,1.8,-80 + i*12]);
+  box(scene,white,[13,.25,12],[-29,5.1,-80 + i*12]);
+}
+function signTexture(text) {
+  const canvas = document.createElement('canvas'); canvas.width=1024;canvas.height=128;
+  const c=canvas.getContext('2d');c.fillStyle='#142a31';c.fillRect(0,0,1024,128);
+  c.fillStyle='#dcff74';c.font='bold italic 70px sans-serif';c.textAlign='center';c.fillText(text,512,88);
+  const texture = new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;return texture;
+}
+const gantry = new THREE.Group(); scene.add(gantry);
+const startHeading = nearestTrack(points,0,0).heading;
+gantry.rotation.y = -startHeading;
+box(gantry,metal,[.5,8,.5],[-12,4,0]);box(gantry,metal,[.5,8,.5],[12,4,0]);
+box(gantry,material('#ffffff',{map:signTexture('R.A.C.E.  /  APEX CIRCUIT')}),[24,1.8,.3],[0,7.4,0]);
+for (let i=0;i<20;i++) for(let j=0;j<2;j++) {
+  box(gantry,(i+j)%2?metal:white,[1,.015,1],[-9.5+i,.055,j-.5],false);
+}
+
+const car = new THREE.Group(), body = new THREE.Group(), fallback = new THREE.Group();
+car.add(body);body.add(fallback);scene.add(car);
+const paint = new THREE.MeshPhysicalMaterial({color:'#c3271b',metalness:.7,roughness:.27,clearcoat:1});
+box(fallback,paint,[1.95,.45,4.4],[0,.65,0]);
+box(fallback,material('#112a35',{metalness:.5,roughness:.1}),[1.65,.6,1.9],[0,1.1,.2]);
+box(fallback,paint,[1.6,.08,1.2],[0,1.41,.3]);
+box(fallback,material('#ff3222',{emissive:'#ff1505',emissiveIntensity:2}),[1.6,.08,.05],[0,.75,2.22]);
+let wheelParts = [];
+for (const x of [-1,1]) for (const z of [-1.4,1.3]) {
+  const pivot = new THREE.Group();pivot.position.set(x,.38,z);fallback.add(pivot);
+  const wheel = new THREE.Mesh(new THREE.CylinderGeometry(.38,.38,.25,16),material('#15191a'));
+  wheel.rotation.z=Math.PI/2;pivot.add(wheel);wheelParts.push({pivot,wheel,front:z<0,baseX:0});
+}
+// Source and authorship follow the official Three.js car example.
+// The example model remains externally hosted; no asset licence is inferred.
+const draco = new DRACOLoader();
+draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/libs/draco/gltf/');
+const loader = new GLTFLoader().setDRACOLoader(draco);
+loader.load('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r180/examples/models/gltf/ferrari.glb', gltf => {
+  const model = gltf.scene.children[0];
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = bounds.getSize(new THREE.Vector3()), center = bounds.getCenter(new THREE.Vector3());
+  const scale = 4.5 / size.z;
+  const wrapper = new THREE.Group(); wrapper.scale.setScalar(scale);
+  model.position.x -= center.x; model.position.z -= center.z; model.position.y -= bounds.min.y;
+  wrapper.add(model);
+  model.traverse(mesh => { if(mesh.isMesh) {mesh.castShadow=true;mesh.receiveShadow=true;} });
+  const shell = model.getObjectByName('body');if(shell)shell.material=paint;
+  const windowMesh = model.getObjectByName('glass');
+  if(windowMesh)windowMesh.material=new THREE.MeshPhysicalMaterial({color:'#224052',metalness:.35,roughness:.12,clearcoat:1});
+  wheelParts = [];
+  for (const name of ['wheel_fl','wheel_fr','wheel_rl','wheel_rr']) {
+    const wheel=model.getObjectByName(name);if(!wheel)continue;
+    const pivot=new THREE.Group();pivot.position.copy(wheel.position);wheel.parent.add(pivot);
+    pivot.add(wheel);wheel.position.set(0,0,0);
+    wheelParts.push({pivot,wheel,front:name.startsWith('wheel_f'),baseX:wheel.rotation.x});
+  }
+  body.remove(fallback);body.add(wrapper);
+  $('model-credit').textContent='Ferrari 458 Italia - vicent091036 / Three.js';
+  document.body.dataset.carModel='ferrari';
+  draco.dispose();
+},undefined, error => {
+  console.warn('Car model unavailable; using procedural coupe.',error);
+  $('model-credit').textContent='Procedural coupe - Ferrari model unavailable';
+  document.body.dataset.carModel='fallback';
+  draco.dispose();
+});
+
+const map = $('map'), mapContext=map.getContext('2d');
+function drawMap() {
+  const c=mapContext;c.clearRect(0,0,map.width,map.height);
+  const project = (x,z) => [30+(x+90)*.57,20+(z+400)*.37];
+  c.strokeStyle='#b8c6be';c.lineWidth=5;c.lineJoin='round';c.beginPath();
+  points.forEach((p,i)=>{const [x,y]=project(p.x,p.z);if(i===0)c.moveTo(x,y);else c.lineTo(x,y);});
+  c.closePath();c.stroke();
+  let [x,y]=project(0,0);c.fillStyle='#dcff74';c.fillRect(x-4,y-4,8,8);
+  [x,y]=project(carState.x,carState.z);c.fillStyle=offtrack?'#ff6b43':'#dcff74';c.beginPath();c.arc(x,y,6,0,Math.PI*2);c.fill();
+}
+const cameraPosition=new THREE.Vector3(), cameraLook=new THREE.Vector3(), lookTarget=new THREE.Vector3();
+function recover(reset=false) {
+  const nearest = reset ? nearestTrack(points,0,0) : nearestTrack(points,carState.x,carState.z);
+  carState.x=nearest.x;carState.z=nearest.z;carState.heading=nearest.heading;
+  speed=0;steer=0;demoSpeed=0;offtrack=false;testAlarmUntil=0;
+  if(reset) {
+    timing.reset(); keys.clear();
+    if (demo) resetGate.cancel();
+    else resetGate.request(performance.now() - lastPacket < 700 ? input.session : null);
+  } else timing.invalidate();
+  feedback(false);
+  camera.position.set(carState.x-Math.sin(carState.heading)*10,4.5,carState.z+Math.cos(carState.heading)*10);
+  cameraLook.set(carState.x,1,carState.z);
+}
+recover(true);
+$('demo').onclick=()=>{
+  demo=!demo;demoGear=1;keys.clear();recover(true);
+  $('demo').setAttribute('aria-pressed',String(demo));
+  $('demo').textContent=demo?'Hardware control':'Keyboard demo';
+};
+$('recover').onclick=()=>recover();
+$('restart').onclick=()=>recover(true);
+$('setup-toggle').onclick=()=>{
+  $('setup').hidden=!$('setup').hidden;
+  $('setup-toggle').setAttribute('aria-expanded',String(!$('setup').hidden));
+};
+$('setup-close').onclick=()=>{ $('setup').hidden=true; $('setup-toggle').setAttribute('aria-expanded','false'); };
+const saveSettings=()=>{try{localStorage.setItem('race-controls-v3',JSON.stringify(settings));}catch{}};
+for (const id of ['sensitivity','deadzone']) {
+  $(id).value=settings[id];
+  const show=()=>{ $(id+'-value').textContent=id==='deadzone'?settings[id]+'%':settings[id].toFixed(2); };
+  show(); $(id).oninput=()=>{settings[id]=Number($(id).value);show();saveSettings();};
+}
+$('invert').checked=settings.invert;
+$('invert').onchange=()=>{settings.invert=$('invert').checked;saveSettings();};
+$('calibrate').onclick=()=>{
+  const samples=steeringSamples.filter(s=>performance.now()-s.time<1500).map(s=>s.value);
+  if (!fresh() || demo || input.speed>.1 || samples.length<10 ||
+      Math.max(...samples)-Math.min(...samples)>8) {
+    $('calibration-status').textContent='Stop, release the stick and keep it still for 1.5 s.';return;
+  }
+  const center=samples.reduce((a,b)=>a+b,0)/samples.length;
+  if(Math.abs(center)>30) {
+    $('calibration-status').textContent='Large offset: hold both gear buttons for 1 s to recalibrate ECU1.';return;
+  }
+  settings.center=center;saveSettings();
+  $('calibration-status').textContent='Center saved. Adjust sensitivity and deadzone to taste.';
+};
+$('buzzer-test').onclick=()=>{
+  if (!demo && fresh() && input.feedback && !resetGate.pending) testAlarmUntil=performance.now()+1000;
+};
+$('audio-toggle').onclick=async()=>{
+  try {
+    const enabled=await audio.toggle();
+    $('audio-toggle').textContent=enabled?'Mute audio':'Enable audio';
+    $('audio-toggle').setAttribute('aria-pressed',String(enabled));
+  } catch { $('audio-toggle').textContent='Audio unavailable'; }
+};
+$('volume').oninput=()=>{audio.volume=Number($('volume').value);};
+$('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch{}};
+addEventListener('keydown',e=>{
+  if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if(e.code==='KeyR'&&!e.repeat)recover();
+  if(!demo)return;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','KeyE','KeyQ'].includes(e.code)){e.preventDefault();keys.add(e.code);}
+  if(!e.repeat&&e.code==='KeyE')demoGear=clamp(demoGear+1,1,6);
+  if(!e.repeat&&e.code==='KeyQ'&&demoGear>1&&demoSpeed<=GEAR_LIMITS[demoGear-2])demoGear--;
+});
+addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',()=>keys.clear());
+document.addEventListener('visibilitychange',()=>{
+  keys.clear();if(document.hidden){timing.invalidate();feedback(false);audio.silence();testAlarmUntil=0;paused=true;}
+});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+addEventListener('pagehide',()=>{feedback(false);audio.close();stopped=true;clearInterval(heartbeat);clearTimeout(connectTimer);clearTimeout(reconnectTimer);socket?.close();});
+addEventListener('pageshow',e=>{if(e.persisted)location.reload();});
+
+function updateHud(now) {
+  const live=fresh();
+  $('speed').textContent=Math.round(speed);$('gear').textContent=demo?demoGear:input.gear;
+  const rpm=demo?clamp(speed/GEAR_LIMITS[demoGear-1]*8000,1000,8000):resetGate.pending?1000:input.rpm;
+  $('rpm').textContent=Math.round(rpm);$('rpm-bar').style.transform='scaleX('+clamp(rpm/8000,0,1)+')';
+  $('lap-time').textContent=formatTime(timing.elapsed);$('laps').textContent=timing.laps;
+  $('average').textContent=timing.average.toFixed(1)+' km/h';
+  $('last-lap').textContent=timing.last?(formatTime(timing.last.time)+(timing.last.valid?'':' *')):'--:--.---';
+  $('best-lap').textContent=formatTime(timing.best);
+  $('lap-state').textContent=!timing.started?'Ready on the grid':!timing.valid?'Lap invalid - track limits / interruption':'Checkpoint '+timing.nextGate+'/16 - clean lap';
+  $('warning').style.display=offtrack?'block':'none';
+  $('mode').textContent=demo?'Keyboard simulation':'Hardware control';
+  $('status').textContent=demo?'DEMO / 6-SPEED':live&&resetGate.pending?'RESET PENDING':live?'ECU LIVE':connected?'WAITING FOR ECU':'CONNECTING TO GATEWAY';
+  $('notice').textContent=demo?'W/S pedals - A/D steering - E/Q gears - R recover':
+    live&&resetGate.pending?'Waiting for ECU reset. Release throttle. Check GPIO14 -> PC11.':
+    live?'Joystick: steering - Buttons: throttle, brake, gear + / -':
+    connected?'Waiting for protocol v3 telemetry. Update ECU2, ESP32 and Arduino.':'Join HIL_Telemetry Wi-Fi. Reconnecting automatically.';
+  $('steering-values').textContent='Input: '+input.steer+'% / output: '+Math.round(shapeSteering(input.steer,settings)*100)+'%';
+  $('diagnostic').textContent=demo?'Demo: hardware buzzer disabled.':!live?'Waiting for live ECU telemetry.':
+    !input.feedback?'Return UART missing: connect ESP32 GPIO14 -> ECU2 PC11 and common GND.':
+    resetGate.pending?'Return UART OK. Waiting for session '+resetGate.token+' acknowledgement.':
+    'Return UART OK / session '+input.session+' / alarm '+(input.alarm?'ACK ON':'OFF')+' / buzzer: Arduino D7.';
+  $('buzzer-test').disabled=demo||!live||!input.feedback||resetGate.pending;
+  drawMap();
+}
+const smooth=(a,b,rate,dt)=>THREE.MathUtils.lerp(a,b,1-Math.exp(-rate*dt));
+let previous=performance.now(),hudAt=0,wheelSpin=0,wasActive=false;
+function animate(now) {
+  if(stopped)return;
+  requestAnimationFrame(animate);
+  const elapsed=Math.min((now-previous)/1000,.25);previous=now;
+  if(document.hidden)return;
+  if(paused){paused=false;speed=0;demoSpeed=0;lastPacket=-Infinity;return;}
+  const active=demo||(fresh()&&!resetGate.pending);
+  if(!active&&wasActive)feedback(false);
+  wasActive=active;
+  if(!active&&timing.started)timing.invalidate();
+  // Substeps bound steering integration even on slower GPUs.
+  const steps=Math.max(1,Math.ceil(elapsed/(1/120))),dt=elapsed/steps;
+  for(let i=0;i<steps;i++) {
+    let desiredSpeed=active?input.speed:0,desiredSteer=active?shapeSteering(input.steer,settings):0;
+    if(demo) {
+      const throttle=keys.has('KeyW')||keys.has('ArrowUp'),brake=keys.has('KeyS')||keys.has('ArrowDown');
+      const drive=throttle&&demoSpeed<GEAR_LIMITS[demoGear-1]?GEAR_ACCEL[demoGear-1]:0;
+      demoSpeed=clamp(demoSpeed+(brake?-65:drive-.9-.00003*demoSpeed*demoSpeed)*dt,0,360);
+      desiredSpeed=demoSpeed;
+      desiredSteer=Number(keys.has('KeyD')||keys.has('ArrowRight'))-Number(keys.has('KeyA')||keys.has('ArrowLeft'));
+    }
+    speed=smooth(speed,desiredSpeed,8,dt);steer=smooth(steer,desiredSteer,10,dt);
+    if(!active)speed=0;
+    driveStep(carState,speed,steer,dt);
+    const nearest=nearestTrack(points,carState.x,carState.z);
+    // Front/rear wheel envelopes, not just the centre, must remain on asphalt.
+    const alignment=Math.cos(carState.heading-nearest.heading);
+    const sideways=Math.abs(Math.sin(carState.heading-nearest.heading));
+    offtrack=nearest.distance+1.0*Math.abs(alignment)+2.2*sideways>HALF_WIDTH;
+    if(active)timing.step(dt,speed/3.6*dt,nearest.progress,offtrack,alignment>0);
+    wheelSpin=(wheelSpin-speed/3.6*dt/.34)%(Math.PI*2);
+  }
+  const elevation=Math.max(0,scenery.heightAt(carState.x,carState.z));
+  car.position.set(carState.x,elevation,carState.z);car.rotation.y=-carState.heading;
+  body.rotation.z=smooth(body.rotation.z,-steer*.06*Math.min(speed/60,1),6,elapsed);
+  for(const part of wheelParts){part.wheel.rotation.x=part.baseX+wheelSpin;if(part.front)part.pivot.rotation.y=-carState.wheelAngle;}
+  const sin=Math.sin(carState.heading),cos=Math.cos(carState.heading);
+  cameraPosition.set(carState.x-sin*(10+speed*.005),4.2+elevation,carState.z+cos*(10+speed*.005));
+  lookTarget.set(carState.x+sin*6,1+elevation,carState.z-cos*6);
+  camera.position.lerp(cameraPosition,1-Math.exp(-5*elapsed));cameraLook.lerp(lookTarget,1-Math.exp(-7*elapsed));camera.lookAt(cameraLook);
+  sun.position.set(carState.x-45,65,carState.z-35);sun.target.position.set(carState.x,0,carState.z);
+  sky.position.set(carState.x,0,carState.z);
+  audio.update({rpm:demo?clamp(speed/GEAR_LIMITS[demoGear-1]*8000,1000,8000):input.rpm,
+    speed,steer,gear:demo?demoGear:input.gear,offtrack,active});
+  if(now-hudAt>100){updateHud(now);hudAt=now;}
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(animate);

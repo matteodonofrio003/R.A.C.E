@@ -1,231 +1,221 @@
 #include "ch.h"
 #include "hal.h"
 #include "chprintf.h"
+#include <string.h>
 
-#define COCKPIT_PACKET_HEADER    0xAAAAU
-#define COCKPIT_PACKET_MSG_ID    0x010AU
-#define TELEMETRY_PACKET_HEADER  0xBBBBU
-
-#define ENGINE_RPM_IDLE          1000U
-#define ENGINE_RPM_MAX           8000U
-#define RPM_ACCEL_STEP           50
-#define RPM_COAST_DECAY          20
-#define RPM_BRAKE_DECAY          80
-#define SPEED_PER_RPM_KMH        0.025f
-
-#define CLAMP(value, lower, upper) \
-  (((value) < (lower)) ? (lower) : (((value) > (upper)) ? (upper) : (value)))
+#define COCKPIT_HEADER 0xAAAAU
+#define COCKPIT_ID 0x010BU
+#define TELEMETRY_HEADER 0xBDBDU
+#define FEEDBACK_HEADER 0xCDCDU
+#define CLAMP(v, lo, hi) (((v) < (lo)) ? (lo) : (((v) > (hi)) ? (hi) : (v)))
 
 typedef struct __attribute__((packed)) {
-  uint16_t header;
-  uint16_t msg_id;
-  int8_t steer_val;
-  int8_t pedal_val;
-  uint8_t crc;
-} CockpitPacket_t;
+  uint16_t header, msg_id;
+  int8_t steer;
+  uint8_t buttons, gear, crc;
+} CockpitPacket;
 
 typedef struct __attribute__((packed)) {
-  uint16_t header;
-  uint16_t rpm;
+  uint16_t header, rpm;
   float speed_kmh;
+  int8_t steer;
+  uint8_t gear, flags;
+  uint16_t session;
   uint8_t crc;
-} TelemetryPacket_t;
+} TelemetryPacket;
 
-volatile int8_t target_steer;
-volatile int8_t target_pedal;
-volatile uint16_t engine_rpm = ENGINE_RPM_IDLE;
-volatile float vehicle_speed_kmh = ENGINE_RPM_IDLE * SPEED_PER_RPM_KMH;
-volatile uint32_t cockpit_rx_valid_packets;
-volatile uint32_t cockpit_rx_invalid_packets;
+typedef struct __attribute__((packed)) {
+  uint16_t header;
+  uint8_t offtrack;
+  uint16_t session;
+  uint8_t crc;
+} FeedbackPacket;
 
-static const SerialConfig ecu_serial_config = {
-  115200U,
-  0U,
-  USART_CR2_STOP1_BITS,
-  0U
-};
+_Static_assert(sizeof(CockpitPacket) == 8U, "Cockpit v2 layout");
+_Static_assert(sizeof(TelemetryPacket) == 14U, "Telemetry v3 layout");
+_Static_assert(sizeof(FeedbackPacket) == 6U, "Feedback v3 layout");
 
-static const SerialConfig cluster_serial_config = {
-  38400U,
-  0U,
-  USART_CR2_STOP1_BITS,
-  0U
-};
+volatile int8_t target_steer, target_pedal;
+volatile uint16_t engine_rpm = 1000U;
+volatile float vehicle_speed_kmh = 0.0f;
+static uint8_t target_gear = 1U, actual_gear = 1U;
+static bool cockpit_seen, feedback_seen, game_offtrack;
+static bool throttle_pressed;
+static uint16_t requested_session, applied_session;
+static systime_t cockpit_time, feedback_time;
+static uint32_t valid_packets, invalid_packets;
+static const SerialConfig ecu_config = {115200U, 0U, USART_CR2_STOP1_BITS, 0U};
+static const SerialConfig telemetry_config = {38400U, 0U, USART_CR2_STOP1_BITS, 0U};
 
-static uint8_t calculate_crc(const uint8_t *data, size_t length) {
+static uint8_t calculate_crc(const void *frame, size_t size) {
+  const uint8_t *bytes = frame;
   uint8_t crc = 0U;
-
-  while (length > 0U) {
-    crc ^= *data++;
-    length--;
-  }
-
+  for (size_t i = 0; i < size - 1U; i++) crc ^= bytes[i];
   return crc;
 }
 
-static bool cockpit_packet_is_valid(const CockpitPacket_t *packet) {
-  uint8_t crc;
-
-  if ((packet->header != COCKPIT_PACKET_HEADER) ||
-      (packet->msg_id != COCKPIT_PACKET_MSG_ID)) {
-    return false;
-  }
-
-  crc = calculate_crc((const uint8_t *)packet,
-                      sizeof(CockpitPacket_t) - sizeof(packet->crc));
-  return crc == packet->crc;
-}
-
-static THD_WORKING_AREA(wa_uart_receiver, 256);
-static THD_FUNCTION(UartReceiverThread, arg) {
-  CockpitPacket_t packet;
-  uint8_t byte;
-  size_t index = 0U;
-
+/* Sliding windows recover from inserted/lost bytes, including embedded headers. */
+static THD_WORKING_AREA(wa_receiver, 384);
+static THD_FUNCTION(Receiver, arg) {
+  CockpitPacket packet;
+  size_t used = 0U;
   (void)arg;
-
   while (true) {
-    if (chnReadTimeout(&SD1, &byte, 1U, TIME_INFINITE) != 1U) {
+    uint8_t byte;
+    if (chnReadTimeout(&SD1, &byte, 1U, TIME_MS2I(20)) != 1U) {
+      used = 0U;
       continue;
     }
-
-    /*
-     * A byte-oriented state machine makes the stream self-synchronizing.
-     * This is essential when one ECU resets while the other is transmitting:
-     * the first received byte can otherwise be in the middle of a packet.
-     */
-    if (index == 0U) {
-      if (byte == 0xAAU) {
-        ((uint8_t *)&packet)[index++] = byte;
-      }
-      continue;
-    }
-
-    if (index == 1U) {
-      if (byte == 0xAAU) {
-        ((uint8_t *)&packet)[index++] = byte;
-      }
-      else {
-        index = 0U;
-      }
-      continue;
-    }
-
-    ((uint8_t *)&packet)[index++] = byte;
-    if (index == sizeof(packet)) {
-      if (cockpit_packet_is_valid(&packet)) {
-        /*
-         * Both 8-bit targets are updated in one short critical section, so
-         * the dynamics thread always takes a consistent command pair.
-         */
-        chSysLock();
-        target_steer = packet.steer_val;
-        target_pedal = packet.pedal_val;
-        cockpit_rx_valid_packets++;
-        chSysUnlock();
-      }
-      else {
-        chSysLock();
-        cockpit_rx_invalid_packets++;
-        chSysUnlock();
-      }
-
-      index = 0U;
-    }
-  }
-}
-
-static THD_WORKING_AREA(wa_vehicle_dynamics, 256);
-static THD_FUNCTION(VehicleDynamicsThread, arg) {
-  (void)arg;
-
-  while (true) {
-    int8_t pedal;
-    int8_t steer;
-    int32_t next_rpm;
-    uint16_t rpm;
-    float speed;
-
-    /*
-     * This section does not block. It protects the two command bytes from
-     * being observed between the receiver thread's two assignments.
-     */
-    chSysLock();
-    steer = target_steer;
-    pedal = target_pedal;
-    chSysUnlock();
-    (void)steer;
-
-    chSysLock();
-    rpm = engine_rpm;
-    chSysUnlock();
-    next_rpm = (int32_t)rpm;
-
-    if (pedal > 0) {
-      next_rpm += ((int32_t)pedal * RPM_ACCEL_STEP) / 100;
-    }
-    else if (pedal == 0) {
-      next_rpm -= RPM_COAST_DECAY;
+    ((uint8_t *)&packet)[used++] = byte;
+    if (used != sizeof(packet)) continue;
+    if ((packet.header == COCKPIT_HEADER) && (packet.msg_id == COCKPIT_ID) &&
+        (packet.steer >= -100) && (packet.steer <= 100) &&
+        (packet.buttons <= 3U) && (packet.gear >= 1U) && (packet.gear <= 6U) &&
+        (calculate_crc(&packet, sizeof(packet)) == packet.crc)) {
+      chSysLock();
+      target_steer = packet.steer;
+      target_pedal = (packet.buttons & 2U) ? -100 : ((packet.buttons & 1U) ? 100 : 0);
+      target_gear = packet.gear;
+      throttle_pressed = (packet.buttons & 1U) != 0U;
+      cockpit_time = chVTGetSystemTimeX();
+      cockpit_seen = true;
+      valid_packets++;
+      chSysUnlock();
+      used = 0U;
     }
     else {
-      next_rpm -= RPM_COAST_DECAY +
-                  ((-(int32_t)pedal * RPM_BRAKE_DECAY) / 100);
+      chSysLock();
+      invalid_packets++;
+      chSysUnlock();
+      memmove(&packet, ((uint8_t *)&packet) + 1U, sizeof(packet) - 1U);
+      used--;
     }
-
-    next_rpm = CLAMP(next_rpm, (int32_t)ENGINE_RPM_IDLE,
-                     (int32_t)ENGINE_RPM_MAX);
-    rpm = (uint16_t)next_rpm;
-    speed = (float)rpm * SPEED_PER_RPM_KMH;
-
-    chSysLock();
-    engine_rpm = rpm;
-    vehicle_speed_kmh = speed;
-    chSysUnlock();
-
-    chThdSleepMilliseconds(10);
   }
 }
 
-static THD_WORKING_AREA(wa_telemetry, 256);
-static THD_FUNCTION(TelemetryThread, arg) {
+static THD_WORKING_AREA(wa_feedback, 384);
+static THD_FUNCTION(FeedbackReceiver, arg) {
+  FeedbackPacket packet;
+  size_t used = 0U;
   (void)arg;
+  while (true) {
+    uint8_t byte;
+    if (chnReadTimeout(&SD4, &byte, 1U, TIME_MS2I(20)) != 1U) {
+      used = 0U;
+      continue;
+    }
+    ((uint8_t *)&packet)[used++] = byte;
+    if (used != sizeof(packet)) continue;
+    if ((packet.header == FEEDBACK_HEADER) && (packet.offtrack <= 1U) &&
+        (calculate_crc(&packet, sizeof(packet)) == packet.crc)) {
+      chSysLock();
+      game_offtrack = packet.offtrack != 0U;
+      requested_session = packet.session;
+      feedback_time = chVTGetSystemTimeX();
+      feedback_seen = true;
+      chSysUnlock();
+      used = 0U;
+    }
+    else {
+      memmove(&packet, ((uint8_t *)&packet) + 1U, sizeof(packet) - 1U);
+      used--;
+    }
+  }
+}
 
+static THD_WORKING_AREA(wa_physics, 512);
+static THD_FUNCTION(Physics, arg) {
+  const float gear_limit[] = {75.0f, 125.0f, 180.0f, 240.0f, 300.0f, 360.0f};
+  const float acceleration[] = {38.0f, 29.0f, 22.0f, 18.0f, 14.0f, 11.0f};
+  float speed = 0.0f, rpm = 1000.0f;
+  uint8_t gear_actual = 1U;
+  bool release_required = false;
+  systime_t reset_time = 0U;
+  systime_t tick = chVTGetSystemTimeX();
+  (void)arg;
   while (true) {
     int8_t pedal;
-    uint16_t rpm;
-    float speed;
-    uint32_t valid_packets;
-    uint32_t invalid_packets;
-    TelemetryPacket_t cluster_packet;
-
+    uint8_t gear;
+    bool fresh;
+    bool throttle;
+    uint16_t reset_request, reset_applied;
     chSysLock();
-    pedal = target_pedal;
-    rpm = engine_rpm;
-    speed = vehicle_speed_kmh;
-    valid_packets = cockpit_rx_valid_packets;
-    invalid_packets = cockpit_rx_invalid_packets;
+    fresh = cockpit_seen && (chVTTimeElapsedSinceX(cockpit_time) < TIME_MS2I(250));
+    pedal = fresh ? target_pedal : -100;
+    gear = target_gear;
+    throttle = throttle_pressed;
+    reset_request = requested_session;
+    reset_applied = applied_session;
     chSysUnlock();
 
-    chprintf((BaseSequentialStream *)&SD2,
-             "Pedal: %d%% | RPM: %d | Speed: %.1f km/h | RX: %lu/%lu\r\n",
-             (int)pedal, (int)rpm, (double)speed,
-             (unsigned long)valid_packets, (unsigned long)invalid_packets);
+    if (reset_request != reset_applied) {
+      speed = 0.0f;
+      rpm = 1000.0f;
+      release_required = true;
+      reset_time = chVTGetSystemTimeX();
+    }
+    /* A held throttle cannot carry acceleration into a new session. */
+    if (release_required) {
+      speed = 0.0f;
+      rpm = 1000.0f;
+      if (fresh && !throttle &&
+          (chVTTimeElapsedSinceX(reset_time) >= TIME_MS2I(250))) release_required = false;
+      pedal = 0;
+    }
 
-    /*
-     * The Arduino cluster consumes a binary, packed nine-byte frame on a
-     * dedicated UART. The ESP32 gateway receives an identical frame over a
-     * second point-to-point UART. Bounded write timeouts protect scheduling.
+    /* Units: km/h, km/h/s. Brake wins; no speed jump during gear changes.
+     * Reject a downshift that would mechanically over-rev the engine.
      */
-    cluster_packet.header = TELEMETRY_PACKET_HEADER;
-    cluster_packet.rpm = rpm;
-    cluster_packet.speed_kmh = speed;
-    cluster_packet.crc = calculate_crc((const uint8_t *)&cluster_packet,
-                                       sizeof(cluster_packet) -
-                                       sizeof(cluster_packet.crc));
-    (void)chnWriteTimeout(&SD3, (const uint8_t *)&cluster_packet,
-                          sizeof(cluster_packet), TIME_MS2I(2));
-    (void)chnWriteTimeout(&SD4, (const uint8_t *)&cluster_packet,
-                          sizeof(cluster_packet), TIME_MS2I(2));
+    if (speed <= gear_limit[gear - 1U]) gear_actual = gear;
+    float limit = gear_limit[gear_actual - 1U];
+    float drag = 0.9f + 0.00003f * speed * speed;
+    float drive = ((pedal > 0) && (speed < limit)) ? acceleration[gear_actual - 1U] : 0.0f;
+    speed += (drive - drag - ((pedal < 0) ? 65.0f : 0.0f)) * 0.01f;
+    speed = CLAMP(speed, 0.0f, 360.0f);
+    float rpm_target = CLAMP(speed / limit * 8000.0f, 1000.0f, 8000.0f);
+    rpm += CLAMP(rpm_target - rpm, -100.0f, 80.0f);
+    chSysLock();
+    engine_rpm = (uint16_t)rpm;
+    vehicle_speed_kmh = speed;
+    actual_gear = gear_actual;
+    applied_session = reset_request;
+    chSysUnlock();
+    tick += TIME_MS2I(10);
+    chThdSleepUntil(tick);
+  }
+}
+
+static THD_WORKING_AREA(wa_telemetry, 768);
+static THD_FUNCTION(Telemetry, arg) {
+  (void)arg;
+  while (true) {
+    TelemetryPacket packet;
+    int8_t pedal;
+    uint32_t good, bad;
+    chSysLock();
+    bool fresh = cockpit_seen && (chVTTimeElapsedSinceX(cockpit_time) < TIME_MS2I(250));
+    bool return_fresh = feedback_seen &&
+                        (chVTTimeElapsedSinceX(feedback_time) < TIME_MS2I(500));
+    bool offtrack = return_fresh && game_offtrack;
+    packet.rpm = engine_rpm;
+    packet.speed_kmh = vehicle_speed_kmh;
+    packet.steer = fresh ? target_steer : 0;
+    packet.gear = actual_gear;
+    packet.flags = (offtrack ? 1U : 0U) | (fresh ? 2U : 0U) |
+                   (return_fresh ? 4U : 0U);
+    packet.session = applied_session;
+    pedal = fresh ? target_pedal : 0;
+    good = valid_packets;
+    bad = invalid_packets;
+    chSysUnlock();
+    packet.header = TELEMETRY_HEADER;
+    packet.crc = calculate_crc(&packet, sizeof(packet));
+    (void)chnWriteTimeout(&SD3, (const uint8_t *)&packet, sizeof(packet), TIME_MS2I(5));
+    (void)chnWriteTimeout(&SD4, (const uint8_t *)&packet, sizeof(packet), TIME_MS2I(5));
+    chprintf((BaseSequentialStream *)&SD2,
+             "Pedal:%d Steer:%d Gear:%u RPM:%u Speed:%.1f RX:%lu/%lu Alarm:%u FB:%u Session:%u\r\n",
+             pedal, packet.steer, packet.gear, packet.rpm, (double)packet.speed_kmh,
+             (unsigned long)good, (unsigned long)bad, offtrack, return_fresh, packet.session);
     chThdSleepMilliseconds(100);
   }
 }
@@ -233,33 +223,21 @@ static THD_FUNCTION(TelemetryThread, arg) {
 int main(void) {
   halInit();
   chSysInit();
-
-  /*
-   * Inter-ECU UART: USART1, PC4 = TX and PC5 = RX.
-   * Debug UART: ST-LINK VCP via USART2, PA2 = TX and PA3 = RX.
-   * Digital cluster UART: USART3 TX on PB10 (Arduino connector D6).
-   * Wi-Fi gateway UART: UART4 TX on PC10 (ST morpho connector).
-   */
   palSetPadMode(GPIOC, 4U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOC, 5U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOA, 2U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOA, 3U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOB, 10U, PAL_MODE_ALTERNATE(7));
   palSetPadMode(GPIOC, 10U, PAL_MODE_ALTERNATE(5));
-
-  sdStart(&SD1, &ecu_serial_config);
-  sdStart(&SD2, &ecu_serial_config);
-  sdStart(&SD3, &cluster_serial_config);
-  sdStart(&SD4, &cluster_serial_config);
-
-  chThdCreateStatic(wa_uart_receiver, sizeof(wa_uart_receiver), NORMALPRIO,
-                    UartReceiverThread, NULL);
-  chThdCreateStatic(wa_vehicle_dynamics, sizeof(wa_vehicle_dynamics),
-                    HIGHPRIO, VehicleDynamicsThread, NULL);
-  chThdCreateStatic(wa_telemetry, sizeof(wa_telemetry), LOWPRIO,
-                    TelemetryThread, NULL);
-
-  while (true) {
-    chThdSleepMilliseconds(TIME_INFINITE);
-  }
+  /* UART4 RX: ESP32 GPIO14 -> PC11. Both endpoints use 3.3 V logic. */
+  palSetPadMode(GPIOC, 11U, PAL_MODE_ALTERNATE(5));
+  sdStart(&SD1, &ecu_config);
+  sdStart(&SD2, &ecu_config);
+  sdStart(&SD3, &telemetry_config);
+  sdStart(&SD4, &telemetry_config);
+  chThdCreateStatic(wa_receiver, sizeof(wa_receiver), NORMALPRIO, Receiver, NULL);
+  chThdCreateStatic(wa_feedback, sizeof(wa_feedback), NORMALPRIO, FeedbackReceiver, NULL);
+  chThdCreateStatic(wa_physics, sizeof(wa_physics), HIGHPRIO, Physics, NULL);
+  chThdCreateStatic(wa_telemetry, sizeof(wa_telemetry), LOWPRIO, Telemetry, NULL);
+  while (true) chThdSleepMilliseconds(1000);
 }
