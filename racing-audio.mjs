@@ -1,6 +1,6 @@
 /* Procedural racing audio. No downloads; enabled only by a user gesture. */
 export class RacingAudio {
-  constructor() { this.context = null; this.enabled = false; this.volume = .35; this.gear = 1; }
+  constructor() { this.context = null; this.enabled = false; this.volume = .35; }
   async toggle() {
     if (!this.context) this.create();
     await this.context.resume();
@@ -37,8 +37,7 @@ export class RacingAudio {
     const gravelFilter = c.createBiquadFilter();
     gravelFilter.type = 'bandpass'; gravelFilter.frequency.value = 1900; gravelFilter.Q.value = .4;
     noise.connect(gravelFilter); gravelFilter.connect(this.gravel); this.gravel.connect(this.master);
-    this.shift = c.createGain(); this.shift.gain.value = 0;
-    noise.connect(this.shift); this.shift.connect(this.master); noise.start();
+    noise.start();
     this.tyre = c.createOscillator(); this.tyre.type = 'sine'; this.tyre.frequency.value = 850;
     this.squeal = c.createGain(); this.squeal.gain.value = 0;
     this.tyre.connect(this.squeal); this.squeal.connect(this.master); this.tyre.start();
@@ -46,7 +45,7 @@ export class RacingAudio {
   silence() {
     if (this.context) this.master.gain.setTargetAtTime(0, this.context.currentTime, .03);
   }
-  update({ rpm, speed, steer, gear, offtrack, active }) {
+  update({ rpm, speed, steer, offtrack, active }) {
     if (!this.context) return;
     const t = this.context.currentTime;
     const set = (param, value, time = .06) => param.setTargetAtTime(value, t, time);
@@ -58,12 +57,6 @@ export class RacingAudio {
     set(this.gravel.gain, offtrack ? Math.min(speed / 90, 1) * .2 : 0);
     set(this.squeal.gain, !offtrack ? Math.max(0, Math.abs(steer) * speed / 140 - .35) * .018 : 0);
     set(this.tyre.frequency, 750 + Math.abs(steer) * 280);
-    if (gear !== this.gear && active && this.enabled) {
-      this.shift.gain.cancelScheduledValues(t);
-      this.shift.gain.setValueAtTime(.10, t);
-      this.shift.gain.exponentialRampToValueAtTime(.0001, t + .10);
-    }
-    this.gear = gear;
   }
   close() { this.context?.close(); }
 }

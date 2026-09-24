@@ -14,7 +14,8 @@ const root = path.resolve(__dirname, '..');
     if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
     fs.readFile(file, (error, bytes) => {
       if (error) { res.writeHead(404).end(); return; }
-      res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html' : 'text/javascript');
+      const mime={'.html':'text/html','.mjs':'text/javascript','.jpg':'image/jpeg','.hdr':'application/octet-stream'};
+      res.setHeader('Content-Type',mime[path.extname(file)]||'application/octet-stream');
       res.end(bytes);
     });
   });
@@ -28,14 +29,23 @@ const root = path.resolve(__dirname, '..');
     const page = await browser.newPage({viewport: {width:1100,height:720}});
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => {
+      if(message.type()==='error' && /WebGLProgram|Shader Error/.test(message.text())) errors.push(message.text());
+    });
     await page.addInitScript(() => {
+      if (location.protocol === 'http:') {
+        localStorage.setItem('race-lap-records-v1',JSON.stringify({
+          laps:7,best:62.345,last:{time:65.432,valid:true}
+        }));
+        localStorage.setItem('race-camera-v1','chase');
+      }
       window.sent = [];
-      window.packet = {rpm:4500,speed:180,steer:0,gear:4,cockpit:true,session:40,feedback:false,alarm:false};
+      window.packet = {rpm:4500,speed:180,steer:0,gear:1,cockpit:true,session:40,feedback:false,alarm:false};
       window.WebSocket = class {
         constructor() {
           this.readyState=0;
           setTimeout(()=>{this.readyState=1;this.onopen?.();},10);
-          this.timer=setInterval(()=>this.onmessage?.({data:JSON.stringify(window.packet)}),100);
+          this.timer=setInterval(()=>this.onmessage?.({data:JSON.stringify(window.packet)}),20);
         }
         send(raw) { window.sent.push(JSON.parse(raw)); }
         close() { clearInterval(this.timer);this.readyState=3;this.onclose?.(); }
@@ -48,6 +58,9 @@ const root = path.resolve(__dirname, '..');
     await page.goto('http://127.0.0.1:'+server.address().port, {waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>document.getElementById('status').textContent==='RESET PENDING',null,{timeout:60000});
     assert.equal(await page.locator('#speed').textContent(),'0');
+    assert.equal(await page.locator('#laps').textContent(),'7');
+    assert.equal(await page.locator('#best-lap').textContent(),'01:02.345');
+    assert.equal(await page.locator('#last-lap').textContent(),'01:05.432');
     await page.waitForFunction(()=>window.sent.some(p=>p.session===41));
     await page.locator('#setup-toggle').click();
     await page.waitForFunction(()=>document.getElementById('diagnostic').textContent.includes('Return UART missing'));
@@ -62,6 +75,18 @@ const root = path.resolve(__dirname, '..');
     await page.waitForTimeout(2000);
     await page.locator('#calibrate').click();
     assert.match(await page.locator('#calibration-status').textContent(),/Center saved/);
+    await page.locator('#calibrate-range').click();
+    await page.locator('#calibrate-range').click();
+    await page.evaluate(()=>{window.packet.steer=90;});
+    await page.waitForTimeout(1400);
+    await page.locator('#calibrate-range').click();
+    await page.evaluate(()=>{window.packet.steer=-80;});
+    await page.waitForTimeout(1400);
+    await page.locator('#calibrate-range').click();
+    assert.match(await page.locator('#calibration-status').textContent(),/Range and direction saved/);
+    await page.evaluate(()=>{window.packet.steer=-4;});
+    await page.waitForFunction(()=>document.getElementById('steering-values').textContent.includes('output: 5%'));
+    await page.evaluate(()=>{window.packet.steer=0;});
     await page.evaluate(()=>{window.sent=[];});
     await page.locator('#buzzer-test').click();
     await page.waitForFunction(()=>window.sent.some(p=>p.offtrack));
@@ -82,11 +107,22 @@ const root = path.resolve(__dirname, '..');
     await page.evaluate(()=>{window.packet.session=42;window.packet.speed=0;});
     await page.waitForFunction(()=>document.getElementById('status').textContent==='ECU LIVE');
     await page.waitForTimeout(300);
-    assert.equal(await page.locator('#laps').textContent(),'0');
+    assert.equal(await page.locator('#laps').textContent(),'7');
+    assert.equal(await page.locator('#best-lap').textContent(),'01:02.345');
+    assert.equal(await page.locator('#last-lap').textContent(),'01:05.432');
     assert.equal(await page.locator('#average').textContent(),'0.0 km/h');
+    assert.equal(await page.locator('#gear').count(),0);
     await page.evaluate(()=>{window.packet.rpm=1000;});
     await page.waitForTimeout(200);
-    await page.screenshot({path:path.join(os.tmpdir(),'race-v3-desktop.jpg'),type:'jpeg',quality:55});
+    await page.waitForFunction(()=>document.body.dataset.environment==='hdr',null,{timeout:30000});
+    await page.locator('#camera-toggle').click();
+    await page.waitForFunction(()=>document.body.classList.contains('cockpit-view'));
+    assert.equal(await page.locator('#camera-toggle').getAttribute('aria-pressed'),'true');
+    await page.waitForTimeout(500);
+    await page.screenshot({path:path.join(os.tmpdir(),'race-v6-cockpit.jpg'),type:'jpeg',quality:65});
+    await page.locator('#camera-toggle').click();
+    await page.waitForFunction(()=>!document.body.classList.contains('cockpit-view'));
+    await page.screenshot({path:path.join(os.tmpdir(),'race-v6-desktop.jpg'),type:'jpeg',quality:60});
     await page.locator('#demo').click();
     await page.keyboard.down('KeyW');
     await page.waitForFunction(()=>Number(document.getElementById('speed').textContent)>10);
@@ -94,11 +130,11 @@ const root = path.resolve(__dirname, '..');
     assert.equal(await page.evaluate(()=>window.sent.at(-1).offtrack),false);
     await page.setViewportSize({width:390,height:844});
     await page.locator('#setup-toggle').click();
-    await page.screenshot({path:path.join(os.tmpdir(),'race-v3-mobile.jpg'),type:'jpeg',quality:50});
+    await page.screenshot({path:path.join(os.tmpdir(),'race-v6-mobile.jpg'),type:'jpeg',quality:50});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     assert.deepEqual(errors,[]);
-    console.log('PASS: reset/ACK, stale frames, calibration, buzzer pulse, audio, demo, responsive layout.');
-    console.log('Screenshots: '+path.join(os.tmpdir(),'race-v3-{desktop,mobile}.jpg'));
+    console.log('PASS: persistent lap records, cockpit/chase cameras, reset/ACK, calibration, buzzer, HDR and responsive layout.');
+    console.log('Screenshots: '+path.join(os.tmpdir(),'race-v6-{cockpit,desktop,mobile}.jpg'));
   } finally {
     await browser?.close();
     await new Promise(resolve=>server.close(resolve));

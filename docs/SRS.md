@@ -2,7 +2,7 @@
 
 ## Distributed Automotive HIL (Hardware-in-the-Loop) Simulator
 
-**Document status:** Original baseline. [RACING_V2.md](RACING_V2.md) specifies the racing controls and dynamics; [RACING_V3.md](RACING_V3.md) supersedes its telemetry/feedback protocol and adds calibrated steering, acknowledged session reset, alarm diagnostics, scenery and audio.
+**Document status:** Original baseline. [RACING_V3.md](RACING_V3.md) specifies the wire protocol and reset/alarm behaviour; [RACING_V5.md](RACING_V5.md) describes the current continuous drivetrain without manual gears. Earlier racing revisions are historical.
 
 **Standard:** IEEE 830 Software Requirements Specification  
 **Target platform:** Two STM32G474RE NUCLEO-G474RE boards running **ChibiOS/RT** with **HAL v7**

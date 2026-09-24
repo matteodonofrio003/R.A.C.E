@@ -12,7 +12,7 @@
 typedef struct __attribute__((packed)) {
   uint16_t header, msg_id;
   int8_t steer;
-  uint8_t buttons, gear, crc;
+  uint8_t buttons, reserved, crc;
 } CockpitPacket;
 
 typedef struct __attribute__((packed)) {
@@ -38,7 +38,6 @@ _Static_assert(sizeof(FeedbackPacket) == 6U, "Feedback v3 layout");
 volatile int8_t target_steer, target_pedal;
 volatile uint16_t engine_rpm = 1000U;
 volatile float vehicle_speed_kmh = 0.0f;
-static uint8_t target_gear = 1U, actual_gear = 1U;
 static bool cockpit_seen, feedback_seen, game_offtrack;
 static bool throttle_pressed;
 static uint16_t requested_session, applied_session;
@@ -70,12 +69,11 @@ static THD_FUNCTION(Receiver, arg) {
     if (used != sizeof(packet)) continue;
     if ((packet.header == COCKPIT_HEADER) && (packet.msg_id == COCKPIT_ID) &&
         (packet.steer >= -100) && (packet.steer <= 100) &&
-        (packet.buttons <= 3U) && (packet.gear >= 1U) && (packet.gear <= 6U) &&
+        (packet.buttons <= 3U) && (packet.reserved == 1U) &&
         (calculate_crc(&packet, sizeof(packet)) == packet.crc)) {
       chSysLock();
       target_steer = packet.steer;
       target_pedal = (packet.buttons & 2U) ? -100 : ((packet.buttons & 1U) ? 100 : 0);
-      target_gear = packet.gear;
       throttle_pressed = (packet.buttons & 1U) != 0U;
       cockpit_time = chVTGetSystemTimeX();
       cockpit_seen = true;
@@ -125,24 +123,20 @@ static THD_FUNCTION(FeedbackReceiver, arg) {
 
 static THD_WORKING_AREA(wa_physics, 512);
 static THD_FUNCTION(Physics, arg) {
-  const float gear_limit[] = {75.0f, 125.0f, 180.0f, 240.0f, 300.0f, 360.0f};
-  const float acceleration[] = {38.0f, 29.0f, 22.0f, 18.0f, 14.0f, 11.0f};
+  const float speed_limit = 360.0f;
   float speed = 0.0f, rpm = 1000.0f;
-  uint8_t gear_actual = 1U;
   bool release_required = false;
   systime_t reset_time = 0U;
   systime_t tick = chVTGetSystemTimeX();
   (void)arg;
   while (true) {
     int8_t pedal;
-    uint8_t gear;
     bool fresh;
     bool throttle;
     uint16_t reset_request, reset_applied;
     chSysLock();
     fresh = cockpit_seen && (chVTTimeElapsedSinceX(cockpit_time) < TIME_MS2I(250));
     pedal = fresh ? target_pedal : -100;
-    gear = target_gear;
     throttle = throttle_pressed;
     reset_request = requested_session;
     reset_applied = applied_session;
@@ -163,30 +157,28 @@ static THD_FUNCTION(Physics, arg) {
       pedal = 0;
     }
 
-    /* Units: km/h, km/h/s. Brake wins; no speed jump during gear changes.
-     * Reject a downshift that would mechanically over-rev the engine.
-     */
-    if (speed <= gear_limit[gear - 1U]) gear_actual = gear;
-    float limit = gear_limit[gear_actual - 1U];
+    /* Continuous single-ratio model. Units: km/h and km/h/s. */
     float drag = 0.9f + 0.00003f * speed * speed;
-    float drive = ((pedal > 0) && (speed < limit)) ? acceleration[gear_actual - 1U] : 0.0f;
+    float drive = ((pedal > 0) && (speed < speed_limit)) ?
+                  38.0f - 27.0f * speed / speed_limit : 0.0f;
     speed += (drive - drag - ((pedal < 0) ? 65.0f : 0.0f)) * 0.01f;
-    speed = CLAMP(speed, 0.0f, 360.0f);
-    float rpm_target = CLAMP(speed / limit * 8000.0f, 1000.0f, 8000.0f);
+    speed = CLAMP(speed, 0.0f, speed_limit);
+    float rpm_target = CLAMP(1000.0f + speed / speed_limit * 7000.0f,
+                             1000.0f, 8000.0f);
     rpm += CLAMP(rpm_target - rpm, -100.0f, 80.0f);
     chSysLock();
     engine_rpm = (uint16_t)rpm;
     vehicle_speed_kmh = speed;
-    actual_gear = gear_actual;
     applied_session = reset_request;
     chSysUnlock();
-    tick += TIME_MS2I(10);
-    chThdSleepUntil(tick);
+    tick = chThdSleepUntilWindowed(tick, tick + TIME_MS2I(10));
   }
 }
 
 static THD_WORKING_AREA(wa_telemetry, 768);
 static THD_FUNCTION(Telemetry, arg) {
+  unsigned cluster_divider = 0U;
+  systime_t tick = chVTGetSystemTimeX();
   (void)arg;
   while (true) {
     TelemetryPacket packet;
@@ -200,7 +192,7 @@ static THD_FUNCTION(Telemetry, arg) {
     packet.rpm = engine_rpm;
     packet.speed_kmh = vehicle_speed_kmh;
     packet.steer = fresh ? target_steer : 0;
-    packet.gear = actual_gear;
+    packet.gear = 1U; /* Reserved wire byte; no shift logic remains. */
     packet.flags = (offtrack ? 1U : 0U) | (fresh ? 2U : 0U) |
                    (return_fresh ? 4U : 0U);
     packet.session = applied_session;
@@ -210,13 +202,17 @@ static THD_FUNCTION(Telemetry, arg) {
     chSysUnlock();
     packet.header = TELEMETRY_HEADER;
     packet.crc = calculate_crc(&packet, sizeof(packet));
-    (void)chnWriteTimeout(&SD3, (const uint8_t *)&packet, sizeof(packet), TIME_MS2I(5));
     (void)chnWriteTimeout(&SD4, (const uint8_t *)&packet, sizeof(packet), TIME_MS2I(5));
-    chprintf((BaseSequentialStream *)&SD2,
-             "Pedal:%d Steer:%d Gear:%u RPM:%u Speed:%.1f RX:%lu/%lu Alarm:%u FB:%u Session:%u\r\n",
-             pedal, packet.steer, packet.gear, packet.rpm, (double)packet.speed_kmh,
-             (unsigned long)good, (unsigned long)bad, offtrack, return_fresh, packet.session);
-    chThdSleepMilliseconds(100);
+    /* Gateway steering at 50 Hz; LCD/debug stay at 10 Hz. Wire layout is unchanged. */
+    if (cluster_divider++ == 0U) {
+      (void)chnWriteTimeout(&SD3, (const uint8_t *)&packet, sizeof(packet), TIME_MS2I(5));
+      chprintf((BaseSequentialStream *)&SD2,
+               "Pedal:%d Steer:%d RPM:%u Speed:%.1f RX:%lu/%lu Alarm:%u FB:%u Session:%u\r\n",
+               pedal, packet.steer, packet.rpm, (double)packet.speed_kmh,
+               (unsigned long)good, (unsigned long)bad, offtrack, return_fresh, packet.session);
+    }
+    if (cluster_divider >= 5U) cluster_divider = 0U;
+    tick = chThdSleepUntilWindowed(tick, tick + TIME_MS2I(20));
   }
 }
 

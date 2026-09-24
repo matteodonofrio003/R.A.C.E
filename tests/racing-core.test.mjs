@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeTelemetry, driveStep, nearestTrack, LapTimer, formatTime, shapeSteering, SessionReset } from '../racing-core.mjs';
+import { decodeTelemetry, driveStep, nearestTrack, LapTimer, formatTime, shapeSteering, calibrateSteering, approachSteering, SessionReset } from '../racing-core.mjs';
 
 test('v3 telemetry validates boundaries and rejects legacy or malformed frames', () => {
-  const frame = { speed: 360, steer: -100, rpm: 8000, gear: 6, cockpit: true, session: 65535, feedback: true, alarm: false };
+  const frame = { speed: 360, steer: -100, rpm: 8000, gear: 1, cockpit: true, session: 65535, feedback: true, alarm: false };
   assert.deepEqual(decodeTelemetry(JSON.stringify(frame)), frame);
-  for (const changes of [{speed:361},{steer:101},{gear:0},{rpm:Infinity},{cockpit:1},{speed:'80'},
+  for (const changes of [{speed:361},{steer:101},{gear:0},{gear:6},{rpm:Infinity},{cockpit:1},{speed:'80'},
     {session:65536},{session:-1},{session:1.5},{feedback:1},{alarm:null}]) {
     assert.equal(decodeTelemetry(JSON.stringify({...frame,...changes})),null);
   }
@@ -13,17 +13,40 @@ test('v3 telemetry validates boundaries and rejects legacy or malformed frames',
   assert.equal(decodeTelemetry('{'),null);
 });
 
-test('steering calibration has a deadzone, progressive response and independent endpoints', () => {
-  for(let raw=-3;raw<=3;raw++)assert.equal(Math.abs(shapeSteering(raw)),0);
-  assert.equal(shapeSteering(100),.8);
-  assert.equal(shapeSteering(-100),-.8);
+test('analog steering retains every one-percent input, including micro corrections', () => {
+  assert.equal(shapeSteering(0),0);
+  assert.equal(shapeSteering(100),1);
+  assert.equal(shapeSteering(-100),-1);
+  assert.equal(shapeSteering(1),.01);
+  assert.equal(shapeSteering(-2),-.02);
   assert.equal(shapeSteering(40),-shapeSteering(-40));
-  assert.ok(shapeSteering(40)<.4*.8);
+  assert.equal(shapeSteering(40),.4);
   assert.equal(shapeSteering(14,{center:12,deadzone:3}),0);
   assert.equal(shapeSteering(-100,{center:12,sensitivity:1}),-1);
   assert.equal(shapeSteering(100,{center:12,sensitivity:1,invert:true}),-1);
   let previous=-1;
-  for(let raw=-100;raw<=100;raw++){const value=shapeSteering(raw);assert.ok(value>=previous);previous=value;}
+  for(let raw=-99;raw<=100;raw++){const value=shapeSteering(raw);assert.ok(value>previous);previous=value;}
+});
+
+test('three-point calibration learns reversed and asymmetric physical joystick travel', () => {
+  const calibration=calibrateSteering(4,88,-76);
+  assert.ok(calibration);
+  assert.equal(shapeSteering(88,calibration),-1);
+  assert.equal(shapeSteering(-76,calibration),1);
+  assert.equal(shapeSteering(4,calibration),0);
+  assert.equal(shapeSteering(-36,calibration),.5);
+  assert.equal(shapeSteering(46,calibration),-.5);
+  assert.equal(calibrateSteering(0,0,0),null);
+  assert.equal(calibrateSteering(0,60,80),null);
+  assert.equal(calibrateSteering(0,-2,2),null);
+});
+
+test('steering slew limits sudden throws without discarding small targets', () => {
+  assert.ok(approachSteering(0,1,.01)<=.0161);
+  assert.ok(approachSteering(0,.01,.01)>0);
+  let value=0;
+  for(let i=0;i<120;i++)value=approachSteering(value,.01,1/120);
+  assert.ok(Math.abs(value-.01)<.000001);
 });
 
 test('new sessions require the new ECU acknowledgement, never a cached zero-speed packet', () => {
@@ -72,6 +95,37 @@ test('lap requires all sixteen forward checkpoints; average includes stopped tim
   assert.equal(timer.laps,0);
   for(let i=1;i<=16;i++)timer.step(1,20,(i%16)/16,false,true);
   assert.equal(timer.laps,1);assert.ok(timer.best>0);
+});
+
+test('lap detection accepts skipped projection sectors but rejects reverse jumps', () => {
+  const timer=new LapTimer();
+  timer.step(.1,4,.01,false,true);
+  timer.step(.1,4,.26,false,true);
+  assert.equal(timer.nextGate,5);
+  timer.step(.1,4,.20,false,false);
+  assert.equal(timer.nextGate,5);
+  timer.step(.1,4,.51,false,true);
+  assert.equal(timer.nextGate,9);
+  timer.step(.1,4,.76,false,true);
+  assert.equal(timer.nextGate,13);
+  const completed=timer.step(.1,4,.01,false,true);
+  assert.equal(completed.lap,1);
+  assert.equal(completed.valid,true);
+  assert.equal(completed.newBest,true);
+});
+
+test('lap records survive a session reset and validate persisted data', () => {
+  const timer=new LapTimer();
+  timer.step(1,10,.01,false,true);
+  for(let i=1;i<=16;i++)timer.step(1,10,(i%16)/16,false,true);
+  const saved=timer.snapshot();
+  timer.resetSession();
+  assert.equal(timer.laps,1);assert.equal(timer.best,saved.best);assert.deepEqual(timer.last,saved.last);
+  assert.equal(timer.elapsed,0);assert.equal(timer.average,0);
+  const restored=new LapTimer();
+  assert.equal(restored.restore(saved),true);assert.deepEqual(restored.snapshot(),saved);
+  assert.equal(restored.restore({laps:-1,best:1,last:null}),false);
+  assert.equal(restored.restore({laps:1,best:1,last:{time:null,valid:true}}),false);
 });
 
 test('off-track lap still counts but cannot set best time', () => {

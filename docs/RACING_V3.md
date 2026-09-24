@@ -1,5 +1,9 @@
 # R.A.C.E. - Steering, session control and racing experience v3
 
+**Controls/rendering update:** [RACING_V4.md](RACING_V4.md) supersedes the steering
+filter/curve, shift diagnostics, gateway rate and landscape below. Wire layouts
+and reset/alarm behaviour remain v3-compatible.
+
 This revision supersedes the v2 telemetry/feedback protocol and session behaviour.
 The cockpit packet and existing button wiring remain unchanged.
 **Rebuild and flash ECU1, ECU2, ESP32 and Arduino together.** Build verification

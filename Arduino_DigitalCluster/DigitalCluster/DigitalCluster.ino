@@ -5,7 +5,7 @@
  *   Arduino D10 (SoftwareSerial RX) <- STM32 telemetry TX (3.3 V)
  *   Arduino GND                     -- STM32 GND
  *   LCD 1602 I2C: SDA=A4, SCL=A5, address 0x27
- *   Shift lights: green=D6, yellow=D8, red=D9
+ *   RPM lights: green=D6, yellow=D8, red=D9
  *   Piezo buzzer: D7
  *
  * SoftwareSerial requires a TX pin even though this application never
@@ -30,9 +30,9 @@
 #define ECU_BAUD_RATE              38400UL
 #define TELEMETRY_HEADER           0xBDBDU
 #define TELEMETRY_TIMEOUT_MS       500UL
-#define SHIFT_GREEN_RPM            4000U
-#define SHIFT_YELLOW_RPM           6000U
-#define SHIFT_RED_RPM              7500U
+#define RPM_GREEN_THRESHOLD        4000U
+#define RPM_YELLOW_THRESHOLD       6000U
+#define RPM_RED_THRESHOLD          7500U
 #define OFFTRACK_FREQUENCY_HZ      2000U
 
 typedef struct __attribute__((packed)) {
@@ -40,7 +40,7 @@ typedef struct __attribute__((packed)) {
   uint16_t rpm;
   float speed_kmh;
   int8_t steer;
-  uint8_t gear;
+  uint8_t reserved;
   uint8_t flags;
   uint16_t session;
   uint8_t crc;
@@ -84,7 +84,7 @@ static bool packet_is_valid(const TelemetryPacket *packet) {
   return (expected_crc == packet->crc) && isfinite(packet->speed_kmh) &&
          (packet->speed_kmh >= 0.0f) && (packet->speed_kmh <= 360.0f) &&
          (packet->rpm >= 1000U) && (packet->rpm <= 8000U) &&
-         (packet->gear >= 1U) && (packet->gear <= 6U) &&
+         (packet->reserved == 1U) &&
          (packet->steer >= -100) && (packet->steer <= 100) && (packet->flags <= 7U);
 }
 
@@ -93,11 +93,11 @@ static void write_display_line(uint8_t row, const char *text) {
   lcd.print(text);
 }
 
-static void update_shift_lights_and_buzzer(uint16_t rpm, bool offtrack) {
+static void update_rpm_lights_and_buzzer(uint16_t rpm, bool offtrack) {
   static bool buzzing = false;
-  digitalWrite(LED_GREEN_PIN, (rpm >= SHIFT_GREEN_RPM) ? HIGH : LOW);
-  digitalWrite(LED_YELLOW_PIN, (rpm >= SHIFT_YELLOW_RPM) ? HIGH : LOW);
-  digitalWrite(LED_RED_PIN, (rpm >= SHIFT_RED_RPM) ? HIGH : LOW);
+  digitalWrite(LED_GREEN_PIN, (rpm >= RPM_GREEN_THRESHOLD) ? HIGH : LOW);
+  digitalWrite(LED_YELLOW_PIN, (rpm >= RPM_YELLOW_THRESHOLD) ? HIGH : LOW);
+  digitalWrite(LED_RED_PIN, (rpm >= RPM_RED_THRESHOLD) ? HIGH : LOW);
 
   /* Do not restart Timer2 on every packet: switch only on alarm edges. */
   if (offtrack != buzzing) {
@@ -115,11 +115,11 @@ static void update_cluster(const TelemetryPacket *packet) {
 
   /*
    * A five-character speed field fits the 1602 LCD exactly, including the
-   * 360.0 km/h maximum of the six-speed powertrain model.
+   * 360.0 km/h maximum of the continuous powertrain model.
    */
   dtostrf(packet->speed_kmh, 5, 1, speed_value);
   snprintf(line_0, sizeof(line_0), "Speed:%s km/h", speed_value);
-  snprintf(line_1, sizeof(line_1), "RPM:%4u Gear:%u ", packet->rpm, packet->gear);
+  snprintf(line_1, sizeof(line_1), "RPM:%4u        ", packet->rpm);
   if (packet->flags & 1U) {
     memcpy(line_1, "OFF TRACK!      ", 17U);
   }
@@ -127,13 +127,13 @@ static void update_cluster(const TelemetryPacket *packet) {
   /* Each line is always 16 characters: no lcd.clear(), hence no flicker. */
   write_display_line(0U, line_0);
   write_display_line(1U, line_1);
-  update_shift_lights_and_buzzer(packet->rpm, (packet->flags & 1U) != 0U);
+  update_rpm_lights_and_buzzer(packet->rpm, (packet->flags & 1U) != 0U);
 }
 
 static void show_no_telemetry(void) {
   write_display_line(0U, "NO ECU DATA     ");
   write_display_line(1U, "Check UART link ");
-  update_shift_lights_and_buzzer(0U, false);
+  update_rpm_lights_and_buzzer(0U, false);
 }
 
 static void handle_received_byte(uint8_t byte) {

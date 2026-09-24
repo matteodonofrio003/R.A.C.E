@@ -1,31 +1,29 @@
 #include "ch.h"
 #include "hal.h"
 #include "chprintf.h"
+#include "source/controls.h"
 
 #define JOYSTICK_ADC_DEPTH       1U
 #define JOYSTICK_PERIOD_MS       20U
 #define JOYSTICK_CENTER          2048
-#define JOYSTICK_DEAD_ZONE       110
-#define JOYSTICK_MIN_RAW         80
-#define JOYSTICK_MAX_RAW         4015
-#define JOYSTICK_MAX             100
+#define JOYSTICK_STEERING_CHANNEL 1U
 #define COCKPIT_PACKET_HEADER    0xAAAAU
 #define COCKPIT_PACKET_MSG_ID    0x010BU
 
 /*
  * The DMA writes one sample for each channel in the sequence:
- * joystick_buffer[0] = PA0 / ADC1_IN1 / steering
- * joystick_buffer[1] = PA1 / ADC1_IN2 / unused Y axis
+ * joystick_buffer[0] = PA0 / ADC1_IN1 / diagnostic X axis
+ * joystick_buffer[1] = PA1 / ADC1_IN2 / steering on this joystick mount
  */
 static adcsample_t joystick_buffer[2];
 
 volatile int32_t steer_val;
 volatile int32_t pedal_val;
 static volatile uint8_t button_state;
-static volatile uint8_t selected_gear = 1U;
-static volatile bool calibration_requested;
 static int32_t joystick_center = JOYSTICK_CENTER;
 static volatile uint16_t steering_raw;
+static volatile uint16_t joystick_raw_x, joystick_raw_y;
+static volatile uint8_t buttons_raw, buttons_stable;
 
 static volatile bool joystick_sample_ready;
 static volatile adcerror_t joystick_adc_last_error;
@@ -35,7 +33,7 @@ typedef struct __attribute__((packed)) {
   uint16_t msg_id;
   int8_t steer_val;
   uint8_t buttons;
-  uint8_t gear;
+  uint8_t reserved;
   uint8_t crc;
 } CockpitPacket_t;
 _Static_assert(sizeof(CockpitPacket_t) == 8U, "Cockpit v2 frame size");
@@ -90,26 +88,7 @@ static const ADCConversionGroup joystick_adc_group = {
 };
 
 static int32_t joystick_normalize(adcsample_t raw) {
-  int32_t delta = (int32_t)raw - joystick_center;
-  int32_t magnitude;
-  int32_t limit;
-
-  if ((delta >= -JOYSTICK_DEAD_ZONE) &&
-      (delta <= JOYSTICK_DEAD_ZONE)) {
-    return 0;
-  }
-
-  if (delta > 0) {
-    magnitude = delta - JOYSTICK_DEAD_ZONE;
-    limit = JOYSTICK_MAX_RAW - joystick_center - JOYSTICK_DEAD_ZONE;
-    magnitude = (magnitude * JOYSTICK_MAX) / limit;
-    return (magnitude > JOYSTICK_MAX) ? JOYSTICK_MAX : magnitude;
-  }
-
-  magnitude = -delta - JOYSTICK_DEAD_ZONE;
-  limit = joystick_center - JOYSTICK_MIN_RAW - JOYSTICK_DEAD_ZONE;
-  magnitude = (magnitude * JOYSTICK_MAX) / limit;
-  return (magnitude > JOYSTICK_MAX) ? -JOYSTICK_MAX : -magnitude;
+  return joystick_map(raw, joystick_center);
 }
 
 static uint8_t calculate_crc(const uint8_t *data, size_t length) {
@@ -143,15 +122,7 @@ static THD_FUNCTION(JoystickThread, arg) {
 
     if (joystick_sample_ready) {
       joystick_sample_ready = false;
-      uint16_t raw = joystick_buffer[0];
-      chSysLock();
-      bool recalibrate = calibration_requested;
-      calibration_requested = false;
-      chSysUnlock();
-      if (recalibrate) {
-        calibrating = true;
-        sum = 0U; samples = 0U; minimum = 4095U; maximum = 0U;
-      }
+      uint16_t raw = joystick_buffer[JOYSTICK_STEERING_CHANNEL];
       if (calibrating) {
         sum += raw; samples++;
         if (raw < minimum) minimum = raw;
@@ -167,10 +138,12 @@ static THD_FUNCTION(JoystickThread, arg) {
           sum = 0U; samples = 0U; minimum = 4095U; maximum = 0U;
         }
       }
-      /* Q8 low-pass filtering: approximately 60 ms at a 50 Hz sampling rate. */
-      filtered += ((int32_t)raw * 256 - filtered) / 4;
+      /* Q8 filtering at 50 Hz: smooth ADC noise without a long steering lag. */
+      filtered += ((int32_t)raw * 256 - filtered) / 2;
       chSysLock();
       steering_raw = raw;
+      joystick_raw_x = joystick_buffer[0];
+      joystick_raw_y = joystick_buffer[1];
       steer_val = calibrating ? 0 : joystick_normalize((adcsample_t)(filtered / 256));
       /* ADC channel Y is retained but pedals are now digital buttons. */
       chSysUnlock();
@@ -187,47 +160,29 @@ static THD_FUNCTION(JoystickThread, arg) {
   }
 }
 
-/* PC0 throttle, PC1 brake, PC2 shift up, PC3 shift down: active-low.
- * Four identical 5 ms samples debounce each transition.
- * Held buttons shift once; simultaneous shift presses are ignored.
+/* PC0 throttle and PC1 brake, active-low. PC2/PC3 are unused.
+ * Four identical 5 ms samples debounce each transition independently.
  */
 static THD_WORKING_AREA(wa_buttons, 256);
 static THD_FUNCTION(ButtonsThread, arg) {
-  uint8_t stable = 0U, candidate = 0U, count = 0U, gear = 1U;
-  unsigned calibrate_hold = 0U;
+  ButtonDebouncer debounce = {0};
   (void)arg;
-  for (unsigned i = 0U; i < 4U; i++) {
+  for (unsigned i = 0U; i < 2U; i++) {
     palSetPadMode(GPIOC, i, PAL_MODE_INPUT_PULLUP);
   }
   while (true) {
     uint8_t raw = 0U;
-    for (unsigned i = 0U; i < 4U; i++) {
+    for (unsigned i = 0U; i < 2U; i++) {
       if (palReadPad(GPIOC, i) == PAL_LOW) raw |= (uint8_t)(1U << i);
     }
-    if (raw != candidate) { candidate = raw; count = 1U; }
-    else if (count < 4U) count++;
-    /* Hold both shift buttons for one second to recenter without rebooting. */
-    if ((raw & 12U) == 12U) {
-      if (calibrate_hold < 200U && ++calibrate_hold == 200U) {
-        chSysLock();
-        calibration_requested = true;
-        chSysUnlock();
-      }
-    }
-    else calibrate_hold = 0U;
-    if ((count == 4U) && (stable != candidate)) {
-      uint8_t pressed = candidate & (uint8_t)~stable;
-      stable = candidate;
-      if ((stable & 12U) != 12U) {
-        if ((pressed & 4U) && (gear < 6U)) gear++;
-        if ((pressed & 8U) && (gear > 1U)) gear--;
-      }
-      chSysLock();
-      button_state = stable & 3U;
-      selected_gear = gear;
-      pedal_val = (stable & 2U) ? -100 : ((stable & 1U) ? 100 : 0);
-      chSysUnlock();
-    }
+    (void)buttons_update(&debounce, raw);
+    uint8_t stable = debounce.stable;
+    chSysLock();
+    buttons_raw = raw;
+    buttons_stable = stable;
+    button_state = stable & 3U;
+    pedal_val = (stable & 2U) ? -100 : ((stable & 1U) ? 100 : 0);
+    chSysUnlock();
     chThdSleepMilliseconds(5);
   }
 }
@@ -240,19 +195,18 @@ static THD_FUNCTION(CockpitTxThread, arg) {
 
   while (true) {
     int32_t steer;
-    uint8_t buttons, gear;
+    uint8_t buttons;
 
     chSysLock();
     steer = steer_val;
     buttons = button_state;
-    gear = selected_gear;
     chSysUnlock();
 
     packet.header = COCKPIT_PACKET_HEADER;
     packet.msg_id = COCKPIT_PACKET_MSG_ID;
     packet.steer_val = (int8_t)steer;
     packet.buttons = buttons;
-    packet.gear = gear;
+    packet.reserved = 1U;
     packet.crc = calculate_crc((const uint8_t *)&packet,
                                sizeof(CockpitPacket_t) - sizeof(packet.crc));
 
@@ -291,17 +245,18 @@ int main(void) {
   while (true) {
     int32_t steer;
     int32_t pedal;
-    uint8_t gear;
 
     chSysLock();
     steer = steer_val;
     pedal = pedal_val;
-    gear = selected_gear;
     chSysUnlock();
 
-    chprintf((BaseSequentialStream *)&SD2, "steer=%ld pedal=%ld gear=%u raw=%u center=%ld\r\n",
-             (long)steer, (long)pedal, (unsigned)gear,
-             (unsigned)steering_raw, (long)joystick_center);
+    chprintf((BaseSequentialStream *)&SD2,
+             "steer=%ld pedal=%ld raw=%u center=%ld X=%u Y=%u axis=Y/PA1 buttons=%x/%x\r\n",
+             (long)steer, (long)pedal,
+             (unsigned)steering_raw, (long)joystick_center,
+             (unsigned)joystick_raw_x, (unsigned)joystick_raw_y,
+             (unsigned)buttons_raw, (unsigned)buttons_stable);
     chThdSleepMilliseconds(100);
   }
 }

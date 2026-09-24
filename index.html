@@ -24,9 +24,8 @@
     #lap-state { font-size:11px; margin-top:16px; color:var(--lime); }
     #map { position:absolute; right:28px; top:98px; width:195px; height:170px; }
     footer { align-items:flex-end; }
-    .speedometer { width:265px; padding:20px; }
+    .speedometer { width:265px; padding:20px; transition:opacity .25s,transform .25s; }
     #speed { font-size:75px; line-height:1.2; font-weight:750; letter-spacing:-.06em; font-variant-numeric:tabular-nums; }
-    #gear { display:inline-grid; place-items:center; border:1px solid #dcff7470; color:var(--lime); width:47px; height:54px; font-size:32px; border-radius:8px; }
     .bar { height:4px; background:#fff2; margin:12px 0; } #rpm-bar { height:100%; background:var(--lime); transform-origin:left; transform:scaleX(0); }
     .controls { max-width:420px; text-align:right; pointer-events:auto; }
     #notice { line-height:1.5; color:#e4e9de; font-size:12px; margin-bottom:12px; }
@@ -35,6 +34,9 @@
     button:disabled { opacity:.45; cursor:not-allowed; }
     button[aria-pressed="true"] { background:var(--lime); color:#152715; }
     #warning { position:absolute; top:30%; left:50%; transform:translateX(-50%); background:#ba4216d9; border:1px solid #ffc38d; border-radius:8px; padding:13px 24px; font-weight:700; letter-spacing:.15em; display:none; }
+    #lap-toast { position:absolute; left:50%; top:18%; transform:translate(-50%,-15px); padding:16px 28px; text-align:center; opacity:0; transition:opacity .25s,transform .25s; pointer-events:none; }
+    #lap-toast.show { opacity:1; transform:translate(-50%,0); }
+    #lap-toast strong { display:block; color:var(--lime); font-size:26px; margin-top:4px; font-variant-numeric:tabular-nums; }
     #model-credit { display:block; margin-top:9px; font-size:9px; color:var(--muted); }
     a { color:inherit; } #error { display:none; position:fixed; top:40%; left:15%; right:15%; padding:25px; }
     #setup { position:fixed; right:24px; top:80px; width:310px; max-height:75vh; overflow:auto; padding:22px; z-index:8; }
@@ -43,14 +45,20 @@
     #setup input[type="range"] { display:block; width:100%; margin-top:8px; accent-color:var(--lime); }
     #setup p { font-size:12px; line-height:1.5; }
     #diagnostic { color:var(--lime); }
+    .steering-meter { position:relative; height:8px; background:linear-gradient(90deg,#62adff,#dcff74,#62adff); border-radius:6px; margin:16px 6px; }
+    .steering-meter::after { content:''; position:absolute; left:50%; top:-4px; height:16px; border-left:1px solid white; }
+    #steering-dot { position:absolute; left:50%; top:-4px; height:16px; width:8px; transform:translateX(-50%); background:white; border:1px solid #183039; border-radius:3px; z-index:1; }
     #audio-toggle[aria-pressed="true"] { background:var(--lime); color:#152715; }
+    body.cockpit-view #map { opacity:.18; }
+    body.cockpit-view .speedometer { opacity:0; transform:translateY(20px); }
+    body.cockpit-view .shade { background:linear-gradient(#06121635,transparent 35%,#05070850); }
     @media(max-width:700px) {
       #hud { padding:14px; } h1 { font-size:19px; } #status { font-size:10px; padding:10px; }
       .timing { left:14px; top:90px; width:175px; padding:13px; } .timing h2 { font-size:16px; margin-bottom:12px; }
       #lap-time { font-size:24px; } .stats { gap:12px; margin-top:12px; } .stats b { font-size:12px; }
       #map { right:12px; top:85px; width:145px; height:125px; }
       .speedometer { width:170px; padding:13px; flex-shrink:0; } #speed { font-size:53px; }
-      #gear { width:33px; height:41px; font-size:24px; } .controls { max-width:185px; } #notice { font-size:10px; }
+      .controls { max-width:185px; } #notice { font-size:10px; }
       footer { gap:9px; } button { padding:9px; font-size:10px; } #model-credit { font-size:8px; }
       #warning { top:42%; padding:10px; font-size:11px; }
     }
@@ -75,25 +83,30 @@
     </section>
     <canvas id="map" width="390" height="340" class="glass" aria-label="Circuit map"></canvas>
     <div id="warning" role="status">OFF TRACK</div>
+    <div id="lap-toast" class="glass" role="status"><span class="eyebrow">Lap completed</span><strong>00:00.000</strong></div>
     <footer>
-      <section class="speedometer glass"><div class="eyebrow" id="mode">Hardware control</div><div class="row"><div><span id="speed">0</span> <span class="eyebrow">km/h</span></div><span id="gear">1</span></div><div class="bar"><div id="rpm-bar"></div></div><div class="eyebrow">RPM <span id="rpm">1000</span> / 8000</div></section>
+      <section class="speedometer glass"><div class="eyebrow" id="mode">Hardware control</div><div class="row"><div><span id="speed">0</span> <span class="eyebrow">km/h</span></div></div><div class="bar"><div id="rpm-bar"></div></div><div class="eyebrow">RPM <span id="rpm">1000</span> / 8000</div></section>
       <section class="controls"><div id="notice">Loading the circuit and car...</div>
-        <button id="demo" aria-pressed="false">Keyboard demo</button><button id="recover">Return to track [R]</button><button id="restart">New session</button><button id="setup-toggle" aria-expanded="false">Controls / diagnostics</button><button id="audio-toggle" aria-pressed="false">Enable audio</button><button id="fullscreen">Fullscreen</button>
+        <button id="demo" aria-pressed="false">Keyboard demo</button><button id="camera-toggle" aria-pressed="false">Cockpit view [C]</button><button id="recover">Return to track [R]</button><button id="restart">New session</button><button id="setup-toggle" aria-expanded="false">Controls / diagnostics</button><button id="audio-toggle" aria-pressed="false">Enable audio</button><button id="fullscreen">Fullscreen</button>
         <a id="model-credit" href="https://threejs.org/examples/webgl_materials_car.html" target="_blank" rel="noopener">Ferrari 458 Italia model: vicent091036 / Three.js example</a>
       </section>
     </footer>
   </main>
   <section id="setup" class="glass" hidden aria-label="Controls and diagnostics">
     <button id="setup-close">Close</button>
-    <label>Sensitivity <output id="sensitivity-value">0.80</output><input id="sensitivity" type="range" min="0.4" max="1.4" step="0.05" value="0.8"></label>
-    <label>Additional deadzone <output id="deadzone-value">3%</output><input id="deadzone" type="range" min="0" max="12" step="1" value="3"></label>
+    <label>Sensitivity <output id="sensitivity-value">1.00</output><input id="sensitivity" type="range" min="0.4" max="1.4" step="0.05" value="1"></label>
+    <label>Additional deadzone <output id="deadzone-value">0%</output><input id="deadzone" type="range" min="0" max="12" step="1" value="0"></label>
     <label><input id="invert" type="checkbox"> Reverse steering direction</label>
     <button id="calibrate">Center joystick</button>
+    <button id="calibrate-range">Calibrate LEFT / CENTER / RIGHT</button>
     <p id="calibration-status">Stop the car and release the stick before centering.</p>
     <p id="steering-values">Input: 0% / output: 0%</p>
+    <div class="steering-meter" aria-hidden="true"><span id="steering-dot"></span></div>
+    <p>Steering uses joystick Y on ECU1 PA1. The signal must vary gradually between 0 and 3.3 V. Check the Y wire, 3V3 and GND if Input jumps.</p>
     <label>Audio volume<input id="volume" type="range" min="0" max="1" step="0.05" value="0.35"></label>
     <p id="diagnostic">Waiting for hardware diagnostics.</p>
     <button id="buzzer-test">Test Arduino buzzer (1 s)</button>
+    <button id="reset-records">Reset lap records</button>
     <p>Return UART: ESP32 GPIO14 to ECU2 PC11. Buzzer: Arduino D7 to GND.</p>
   </section>
   <div id="error" class="glass" role="alert"></div>
