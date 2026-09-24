@@ -119,6 +119,7 @@ const root = path.resolve(__dirname, '..');
     await page.waitForFunction(()=>document.body.classList.contains('cockpit-view'));
     assert.equal(await page.locator('#camera-toggle').getAttribute('aria-pressed'),'true');
     await page.waitForTimeout(500);
+    assert.equal(await page.locator('.speedometer').evaluate(element=>getComputedStyle(element).visibility),'hidden');
     await page.screenshot({path:path.join(os.tmpdir(),'race-v6-cockpit.jpg'),type:'jpeg',quality:65});
     await page.locator('#camera-toggle').click();
     await page.waitForFunction(()=>!document.body.classList.contains('cockpit-view'));

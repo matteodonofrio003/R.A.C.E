@@ -199,27 +199,41 @@ const cockpit=new THREE.Group();cockpit.visible=false;camera.add(cockpit);
 const leather=new THREE.MeshPhysicalMaterial({color:'#090b0c',roughness:.58,clearcoat:.18});
 const carbon=new THREE.MeshPhysicalMaterial({color:'#171b1d',roughness:.3,metalness:.45,clearcoat:.5});
 const brushed=new THREE.MeshStandardMaterial({color:'#8e969a',roughness:.24,metalness:.85});
-const cockpitRed=new THREE.MeshPhysicalMaterial({color:'#b71914',roughness:.3,metalness:.55,clearcoat:1});
+const cockpitRed=new THREE.MeshPhysicalMaterial({color:'#e1261c',roughness:.24,metalness:.18,clearcoat:1});
 const stitch=new THREE.MeshStandardMaterial({color:'#d8322a',roughness:.65});
+const mirrorGlass=new THREE.MeshPhysicalMaterial({color:'#9eb8c7',roughness:.12,metalness:.72,clearcoat:1});
 function cockpitBox(mat,size,pos,rotation=[0,0,0]) {
   const mesh=new THREE.Mesh(cube,mat);mesh.scale.set(...size);mesh.position.set(...pos);
   mesh.rotation.set(...rotation);cockpit.add(mesh);return mesh;
 }
-cockpitBox(leather,[2.45,.42,.48],[0,-.53,-1.18]);
-cockpitBox(carbon,[2.35,.07,.58],[0,-.28,-1.2],[-.08,0,0]);
-cockpitBox(leather,[.58,.76,.52],[.7,-.68,-1.02],[-.18,0,0]);
-cockpitBox(cockpitRed,[2.15,.08,2.0],[0,-.82,-2.05],[.04,0,0]);
-cockpitBox(stitch,[2.15,.012,.012],[0,-.32,-.89]);
-cockpitBox(leather,[.13,1.45,.16],[-.91,.12,-.88],[0,0,-.28]);
-cockpitBox(leather,[.13,1.45,.16],[.91,.12,-.88],[0,0,.28]);
-cockpitBox(leather,[2.0,.12,.18],[0,.78,-.78]);
-const steeringWheel=new THREE.Group();steeringWheel.position.set(0,-.34,-.72);cockpit.add(steeringWheel);
-const rim=new THREE.Mesh(new THREE.TorusGeometry(.31,.038,16,64),leather);steeringWheel.add(rim);
-for(const [x,y,a] of [[0,-.10,0],[-.13,.02,-.65],[.13,.02,.65]]) {
-  const spoke=new THREE.Mesh(cube,carbon);spoke.scale.set(.06,.20,.035);
+cockpitBox(leather,[2.6,.3,.52],[0,-.64,-1.3]);
+cockpitBox(carbon,[2.5,.055,.66],[0,-.41,-1.31],[-.06,0,0]);
+cockpitBox(leather,[.58,.7,.52],[.73,-.75,-1.12],[-.16,0,0]);
+cockpitBox(cockpitRed,[2.05,.07,2.15],[0,-.86,-2.18],[.035,0,0]);
+cockpitBox(stitch,[2.22,.01,.01],[0,-.455,-1.0]);
+cockpitBox(leather,[.105,1.55,.13],[-1.05,.13,-1.0],[0,0,-.24]);
+cockpitBox(leather,[.105,1.55,.13],[1.05,.13,-1.0],[0,0,.24]);
+cockpitBox(leather,[2.16,.09,.15],[0,.86,-.91]);
+const hoodCrease=new THREE.MeshStandardMaterial({color:'#8e120d',roughness:.32,metalness:.2});
+cockpitBox(hoodCrease,[.018,.012,1.62],[-.5,-.818,-2.14],[0,0,-.025]);
+cockpitBox(hoodCrease,[.018,.012,1.62],[.5,-.818,-2.14],[0,0,.025]);
+const rearMirror=cockpitBox(leather,[.48,.15,.045],[0,.64,-.77]);
+const rearMirrorGlass=new THREE.Mesh(new THREE.PlaneGeometry(.425,.105),mirrorGlass);
+rearMirrorGlass.position.set(0,.64,-.744);cockpit.add(rearMirrorGlass);
+for(const side of [-1,1]) {
+  cockpitBox(cockpitRed,[.27,.13,.055],[side*.99,-.29,-.91],[0,side*.12,side*.08]);
+  const sideGlass=new THREE.Mesh(new THREE.PlaneGeometry(.21,.085),mirrorGlass);
+  sideGlass.position.set(side*.985,-.285,-.878);sideGlass.rotation.y=side*-.12;cockpit.add(sideGlass);
+}
+cockpitBox(leather,[1.18,.014,.018],[-.08,-.485,-.94],[0,0,.045]);
+const steeringWheel=new THREE.Group();steeringWheel.position.set(0,-.59,-.95);cockpit.add(steeringWheel);
+const rim=new THREE.Mesh(new THREE.TorusGeometry(.245,.029,16,64),leather);
+rim.scale.y=.94;steeringWheel.add(rim);
+for(const [x,y,a] of [[0,-.075,0],[-.105,.018,-.65],[.105,.018,.65]]) {
+  const spoke=new THREE.Mesh(cube,carbon);spoke.scale.set(.045,.155,.028);
   spoke.position.set(x,y,-.01);spoke.rotation.z=a;steeringWheel.add(spoke);
 }
-const hub=new THREE.Mesh(new THREE.CylinderGeometry(.105,.105,.045,32),carbon);
+const hub=new THREE.Mesh(new THREE.CylinderGeometry(.083,.083,.038,32),carbon);
 hub.rotation.x=Math.PI/2;hub.position.z=-.015;steeringWheel.add(hub);
 function badgeTexture() {
   const canvas=document.createElement('canvas');canvas.width=canvas.height=256;
@@ -228,31 +242,40 @@ function badgeTexture() {
   c.font='italic 900 104px Georgia';c.textAlign='center';c.textBaseline='middle';c.fillText('SF',128,132);
   const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;return texture;
 }
-const badge=new THREE.Mesh(new THREE.CircleGeometry(.082,32),
+const badge=new THREE.Mesh(new THREE.CircleGeometry(.062,32),
   new THREE.MeshBasicMaterial({map:badgeTexture()}));
 badge.position.z=.03;steeringWheel.add(badge);
-const startButton=new THREE.Mesh(new THREE.CylinderGeometry(.033,.033,.022,24),
+const startButton=new THREE.Mesh(new THREE.CylinderGeometry(.026,.026,.018,24),
   new THREE.MeshStandardMaterial({color:'#d11b12',emissive:'#430000',emissiveIntensity:.4,roughness:.35}));
-startButton.rotation.x=Math.PI/2;startButton.position.set(.19,-.04,.035);steeringWheel.add(startButton);
-for(const x of [-.55,.55]) {
-  const vent=new THREE.Mesh(new THREE.CylinderGeometry(.105,.105,.035,32),brushed);
-  vent.rotation.x=Math.PI/2;vent.position.set(x,-.29,-.92);cockpit.add(vent);
-  const centre=new THREE.Mesh(new THREE.CylinderGeometry(.078,.078,.04,24),leather);
-  centre.rotation.x=Math.PI/2;centre.position.set(x,-.29,-.895);cockpit.add(centre);
+startButton.rotation.x=Math.PI/2;startButton.position.set(.145,-.03,.03);steeringWheel.add(startButton);
+for(const x of [-.19,.19]) {
+  const paddle=new THREE.Mesh(cube,brushed);paddle.scale.set(.035,.13,.018);
+  paddle.position.set(x,.005,-.055);paddle.rotation.z=x<0?.12:-.12;steeringWheel.add(paddle);
+}
+for(const [x,color] of [[-.15,'#367bc8'],[-.1,'#f3d12e'],[.1,'#2e9b55']]) {
+  const control=new THREE.Mesh(new THREE.CylinderGeometry(.012,.012,.012,16),
+    new THREE.MeshStandardMaterial({color,roughness:.35}));
+  control.rotation.x=Math.PI/2;control.position.set(x,-.105,.03);steeringWheel.add(control);
+}
+for(const x of [-.61,.61]) {
+  const vent=new THREE.Mesh(new THREE.CylinderGeometry(.086,.086,.03,32),brushed);
+  vent.rotation.x=Math.PI/2;vent.position.set(x,-.44,-1.02);cockpit.add(vent);
+  const centre=new THREE.Mesh(new THREE.CylinderGeometry(.063,.063,.035,24),leather);
+  centre.rotation.x=Math.PI/2;centre.position.set(x,-.44,-.995);cockpit.add(centre);
 }
 const instrumentCanvas=document.createElement('canvas');instrumentCanvas.width=640;instrumentCanvas.height=260;
 const instrumentContext=instrumentCanvas.getContext('2d');
 const instrumentTexture=new THREE.CanvasTexture(instrumentCanvas);instrumentTexture.colorSpace=THREE.SRGBColorSpace;
-const instruments=new THREE.Mesh(new THREE.PlaneGeometry(.62,.252),
+const instruments=new THREE.Mesh(new THREE.PlaneGeometry(.55,.224),
   new THREE.MeshBasicMaterial({map:instrumentTexture,toneMapped:false}));
-instruments.position.set(0,-.16,-.96);cockpit.add(instruments);
+instruments.position.set(0,-.35,-1.08);cockpit.add(instruments);
 const passengerLabelCanvas=document.createElement('canvas');passengerLabelCanvas.width=512;passengerLabelCanvas.height=96;
 const plc=passengerLabelCanvas.getContext('2d');plc.fillStyle='#080909';plc.fillRect(0,0,512,96);
 plc.fillStyle='#d5b83b';plc.font='italic 700 48px Georgia';plc.textAlign='center';plc.fillText('FERRARI 458 ITALIA',256,65);
 const passengerLabelTexture=new THREE.CanvasTexture(passengerLabelCanvas);passengerLabelTexture.colorSpace=THREE.SRGBColorSpace;
-const passengerLabel=new THREE.Mesh(new THREE.PlaneGeometry(.62,.116),
+const passengerLabel=new THREE.Mesh(new THREE.PlaneGeometry(.56,.105),
   new THREE.MeshBasicMaterial({map:passengerLabelTexture,toneMapped:false}));
-passengerLabel.position.set(.66,-.43,-.91);cockpit.add(passengerLabel);
+passengerLabel.position.set(.7,-.56,-1.02);cockpit.add(passengerLabel);
 function updateCockpitDisplay(rpm) {
   const c=instrumentContext;c.fillStyle='#050708';c.fillRect(0,0,640,260);
   c.strokeStyle='#383e40';c.lineWidth=8;c.strokeRect(5,5,630,250);
@@ -526,14 +549,14 @@ function animate(now) {
   for(const part of wheelParts){part.wheel.rotation.x=part.baseX+wheelSpin;if(part.front)part.pivot.rotation.y=-carState.wheelAngle;}
   const sin=Math.sin(carState.heading),cos=Math.cos(carState.heading);
   if(cameraMode==='cockpit') {
-    const driverX=-.42,driverZ=.18;
-    cameraPosition.set(carState.x+driverX*cos-driverZ*sin,1.22+elevation,
+    const driverX=-.38,driverZ=.12;
+    cameraPosition.set(carState.x+driverX*cos-driverZ*sin,1.36+elevation,
       carState.z+driverX*sin+driverZ*cos);
-    lookTarget.set(cameraPosition.x+sin*30,cameraPosition.y+.05,cameraPosition.z-cos*30);
+    lookTarget.set(cameraPosition.x+sin*40,cameraPosition.y-.5,cameraPosition.z-cos*40);
     camera.position.lerp(cameraPosition,1-Math.exp(-18*elapsed));
     cameraLook.lerp(lookTarget,1-Math.exp(-22*elapsed));camera.lookAt(cameraLook);
     camera.rotateZ(-steer*.012);
-    camera.fov=smooth(camera.fov,60+Math.min(speed,300)*.018,4,elapsed);
+    camera.fov=smooth(camera.fov,62+Math.min(speed,300)*.01,4,elapsed);
   } else {
     cameraPosition.set(carState.x-sin*(10+speed*.005),4.2+elevation,carState.z+cos*(10+speed*.005));
     lookTarget.set(carState.x+sin*6,1+elevation,carState.z-cos*6);

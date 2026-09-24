@@ -31,11 +31,13 @@ Use **Cockpit view [C]** or press `C` to switch between chase and first-person
 views. The selected camera mode is remembered in `race-camera-v1`.
 
 The first-person view includes a leather and carbon dashboard, red stitching,
-a Ferrari-inspired steering wheel and yellow `SF` badge, start button, air
-vents, red bonnet, and a live digital instrument panel. The steering wheel
-follows the normalized joystick command. The instrument display shows speed,
-RPM, total completed laps and current lap time. The external speed HUD is
-hidden in cockpit mode to avoid duplicating the in-car instruments.
+a compact Ferrari-inspired steering wheel with paddle shifters, coloured
+controls and yellow `SF` badge, start button, air vents, red bonnet, and a live
+digital instrument panel. The raised driver eye looks slightly down the road;
+the wheel remains below the track horizon and follows the normalized joystick
+command. The instrument display shows speed, RPM, total completed laps and
+current lap time. The external speed HUD is hidden in cockpit mode to avoid
+duplicating the in-car instruments.
 
 ## Verification
 
