@@ -1,0 +1,4 @@
+#ifndef RACE_POWERTRAIN_TELEMETRY_SERVICE_H
+#define RACE_POWERTRAIN_TELEMETRY_SERVICE_H
+void telemetryServiceStart(void);
+#endif

@@ -1,6 +1,7 @@
 # ChibiOS generated dependency and build output.
 **/.dep/
 **/build/
+**/.pio/
 
 # Firmware images and diagnostics.
 *.elf

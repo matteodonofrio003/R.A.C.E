@@ -1,0 +1,4 @@
+#ifndef RACE_POWERTRAIN_FEEDBACK_RECEIVER_H
+#define RACE_POWERTRAIN_FEEDBACK_RECEIVER_H
+void feedbackReceiverStart(void);
+#endif

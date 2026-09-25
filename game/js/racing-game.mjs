@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
-import { clamp, decodeTelemetry, driveStep, nearestTrack, LapTimer, formatTime, shapeSteering, calibrateSteering, approachSteering, SessionReset } from './racing-core.mjs';
-import { RacingAudio } from './racing-audio.mjs';
-import { addScenery } from './racing-scenery.mjs';
-import { scannedMaterial } from './racing-materials.mjs';
+import { clamp, decodeTelemetry, driveStep, nearestTrack, LapTimer, formatTime, shapeSteering, calibrateSteering, approachSteering, SessionReset } from './core/racing-core.mjs';
+import { RacingAudio } from './audio/racing-audio.mjs';
+import { addScenery } from './render/racing-scenery.mjs';
+import { scannedMaterial } from './render/racing-materials.mjs';
+import { createCockpit } from './render/cockpit.mjs';
 
 const $ = id => document.getElementById(id);
 const keys = new Set();
@@ -192,117 +193,16 @@ for (const x of [-1,1]) for (const z of [-1.4,1.3]) {
   wheel.rotation.z=Math.PI/2;pivot.add(wheel);wheelParts.push({pivot,wheel,front:z<0,baseX:0});
 }
 
-/* Driver-eye cockpit. It is attached to the camera so the near geometry stays
- * stable while the camera follows the simulated car.
- */
-const cockpit=new THREE.Group();cockpit.visible=false;camera.add(cockpit);
-const leather=new THREE.MeshPhysicalMaterial({color:'#090b0c',roughness:.58,clearcoat:.18});
-const carbon=new THREE.MeshPhysicalMaterial({color:'#171b1d',roughness:.3,metalness:.45,clearcoat:.5});
-const brushed=new THREE.MeshStandardMaterial({color:'#8e969a',roughness:.24,metalness:.85});
-const cockpitRed=new THREE.MeshPhysicalMaterial({color:'#e1261c',roughness:.24,metalness:.18,clearcoat:1});
-const stitch=new THREE.MeshStandardMaterial({color:'#d8322a',roughness:.65});
-const mirrorGlass=new THREE.MeshPhysicalMaterial({color:'#9eb8c7',roughness:.12,metalness:.72,clearcoat:1});
-function cockpitBox(mat,size,pos,rotation=[0,0,0]) {
-  const mesh=new THREE.Mesh(cube,mat);mesh.scale.set(...size);mesh.position.set(...pos);
-  mesh.rotation.set(...rotation);cockpit.add(mesh);return mesh;
-}
-cockpitBox(leather,[2.6,.3,.52],[0,-.64,-1.3]);
-cockpitBox(carbon,[2.5,.055,.66],[0,-.41,-1.31],[-.06,0,0]);
-cockpitBox(leather,[.58,.7,.52],[.73,-.75,-1.12],[-.16,0,0]);
-cockpitBox(cockpitRed,[2.05,.07,2.15],[0,-.86,-2.18],[.035,0,0]);
-cockpitBox(stitch,[2.22,.01,.01],[0,-.455,-1.0]);
-cockpitBox(leather,[.105,1.55,.13],[-1.05,.13,-1.0],[0,0,-.24]);
-cockpitBox(leather,[.105,1.55,.13],[1.05,.13,-1.0],[0,0,.24]);
-cockpitBox(leather,[2.16,.09,.15],[0,.86,-.91]);
-const hoodCrease=new THREE.MeshStandardMaterial({color:'#8e120d',roughness:.32,metalness:.2});
-cockpitBox(hoodCrease,[.018,.012,1.62],[-.5,-.818,-2.14],[0,0,-.025]);
-cockpitBox(hoodCrease,[.018,.012,1.62],[.5,-.818,-2.14],[0,0,.025]);
-const rearMirror=cockpitBox(leather,[.48,.15,.045],[0,.64,-.77]);
-const rearMirrorGlass=new THREE.Mesh(new THREE.PlaneGeometry(.425,.105),mirrorGlass);
-rearMirrorGlass.position.set(0,.64,-.744);cockpit.add(rearMirrorGlass);
-for(const side of [-1,1]) {
-  cockpitBox(cockpitRed,[.27,.13,.055],[side*.99,-.29,-.91],[0,side*.12,side*.08]);
-  const sideGlass=new THREE.Mesh(new THREE.PlaneGeometry(.21,.085),mirrorGlass);
-  sideGlass.position.set(side*.985,-.285,-.878);sideGlass.rotation.y=side*-.12;cockpit.add(sideGlass);
-}
-cockpitBox(leather,[1.18,.014,.018],[-.08,-.485,-.94],[0,0,.045]);
-const steeringWheel=new THREE.Group();steeringWheel.position.set(0,-.59,-.95);cockpit.add(steeringWheel);
-const rim=new THREE.Mesh(new THREE.TorusGeometry(.245,.029,16,64),leather);
-rim.scale.y=.94;steeringWheel.add(rim);
-for(const [x,y,a] of [[0,-.075,0],[-.105,.018,-.65],[.105,.018,.65]]) {
-  const spoke=new THREE.Mesh(cube,carbon);spoke.scale.set(.045,.155,.028);
-  spoke.position.set(x,y,-.01);spoke.rotation.z=a;steeringWheel.add(spoke);
-}
-const hub=new THREE.Mesh(new THREE.CylinderGeometry(.083,.083,.038,32),carbon);
-hub.rotation.x=Math.PI/2;hub.position.z=-.015;steeringWheel.add(hub);
-function badgeTexture() {
-  const canvas=document.createElement('canvas');canvas.width=canvas.height=256;
-  const c=canvas.getContext('2d');c.fillStyle='#f3cb26';c.beginPath();c.arc(128,128,116,0,Math.PI*2);c.fill();
-  c.strokeStyle='#111';c.lineWidth=10;c.stroke();c.fillStyle='#111';
-  c.font='italic 900 104px Georgia';c.textAlign='center';c.textBaseline='middle';c.fillText('SF',128,132);
-  const texture=new THREE.CanvasTexture(canvas);texture.colorSpace=THREE.SRGBColorSpace;return texture;
-}
-const badge=new THREE.Mesh(new THREE.CircleGeometry(.062,32),
-  new THREE.MeshBasicMaterial({map:badgeTexture()}));
-badge.position.z=.03;steeringWheel.add(badge);
-const startButton=new THREE.Mesh(new THREE.CylinderGeometry(.026,.026,.018,24),
-  new THREE.MeshStandardMaterial({color:'#d11b12',emissive:'#430000',emissiveIntensity:.4,roughness:.35}));
-startButton.rotation.x=Math.PI/2;startButton.position.set(.145,-.03,.03);steeringWheel.add(startButton);
-for(const x of [-.19,.19]) {
-  const paddle=new THREE.Mesh(cube,brushed);paddle.scale.set(.035,.13,.018);
-  paddle.position.set(x,.005,-.055);paddle.rotation.z=x<0?.12:-.12;steeringWheel.add(paddle);
-}
-for(const [x,color] of [[-.15,'#367bc8'],[-.1,'#f3d12e'],[.1,'#2e9b55']]) {
-  const control=new THREE.Mesh(new THREE.CylinderGeometry(.012,.012,.012,16),
-    new THREE.MeshStandardMaterial({color,roughness:.35}));
-  control.rotation.x=Math.PI/2;control.position.set(x,-.105,.03);steeringWheel.add(control);
-}
-for(const x of [-.61,.61]) {
-  const vent=new THREE.Mesh(new THREE.CylinderGeometry(.086,.086,.03,32),brushed);
-  vent.rotation.x=Math.PI/2;vent.position.set(x,-.44,-1.02);cockpit.add(vent);
-  const centre=new THREE.Mesh(new THREE.CylinderGeometry(.063,.063,.035,24),leather);
-  centre.rotation.x=Math.PI/2;centre.position.set(x,-.44,-.995);cockpit.add(centre);
-}
-const instrumentCanvas=document.createElement('canvas');instrumentCanvas.width=640;instrumentCanvas.height=260;
-const instrumentContext=instrumentCanvas.getContext('2d');
-const instrumentTexture=new THREE.CanvasTexture(instrumentCanvas);instrumentTexture.colorSpace=THREE.SRGBColorSpace;
-const instruments=new THREE.Mesh(new THREE.PlaneGeometry(.55,.224),
-  new THREE.MeshBasicMaterial({map:instrumentTexture,toneMapped:false}));
-instruments.position.set(0,-.35,-1.08);cockpit.add(instruments);
-const passengerLabelCanvas=document.createElement('canvas');passengerLabelCanvas.width=512;passengerLabelCanvas.height=96;
-const plc=passengerLabelCanvas.getContext('2d');plc.fillStyle='#080909';plc.fillRect(0,0,512,96);
-plc.fillStyle='#d5b83b';plc.font='italic 700 48px Georgia';plc.textAlign='center';plc.fillText('FERRARI 458 ITALIA',256,65);
-const passengerLabelTexture=new THREE.CanvasTexture(passengerLabelCanvas);passengerLabelTexture.colorSpace=THREE.SRGBColorSpace;
-const passengerLabel=new THREE.Mesh(new THREE.PlaneGeometry(.56,.105),
-  new THREE.MeshBasicMaterial({map:passengerLabelTexture,toneMapped:false}));
-passengerLabel.position.set(.7,-.56,-1.02);cockpit.add(passengerLabel);
-function updateCockpitDisplay(rpm) {
-  const c=instrumentContext;c.fillStyle='#050708';c.fillRect(0,0,640,260);
-  c.strokeStyle='#383e40';c.lineWidth=8;c.strokeRect(5,5,630,250);
-  c.fillStyle='#f5d22d';c.beginPath();c.arc(320,130,102,0,Math.PI*2);c.fill();
-  c.fillStyle='#111';c.beginPath();c.arc(320,130,86,0,Math.PI*2);c.fill();
-  c.strokeStyle=rpm>7000?'#ef281b':'#f5d22d';c.lineWidth=10;
-  c.beginPath();c.arc(320,130,92,-Math.PI*.8,-Math.PI*.8+Math.PI*1.6*clamp(rpm/8000,0,1));c.stroke();
-  c.fillStyle='#fff';c.font='700 60px "Segoe UI"';c.textAlign='center';c.fillText(Math.round(speed),320,140);
-  c.font='20px "Segoe UI"';c.fillStyle='#bfc6c7';c.fillText('KM/H',320,174);
-  c.textAlign='left';c.fillStyle='#ef3127';c.font='italic 700 24px Georgia';c.fillText('FERRARI',28,42);
-  c.fillStyle='#fff';c.font='700 28px "Segoe UI"';c.fillText(Math.round(rpm)+' RPM',28,222);
-  c.textAlign='right';c.fillStyle='#fff';c.fillText('LAP '+timing.laps,610,42);
-  c.fillStyle='#c9d1d1';c.font='24px ui-monospace';c.fillText(formatTime(timing.elapsed),610,222);
-  instrumentTexture.needsUpdate=true;
-}
-let cameraMode='chase';
-function setCameraMode(mode) {
-  cameraMode=mode==='cockpit'?'cockpit':'chase';
-  const inside=cameraMode==='cockpit';
-  cockpit.visible=inside;body.visible=!inside;
-  document.body.classList.toggle('cockpit-view',inside);
-  $('camera-toggle').setAttribute('aria-pressed',String(inside));
-  $('camera-toggle').textContent=inside?'Chase view [C]':'Cockpit view [C]';
-  try{localStorage.setItem('race-camera-v1',cameraMode);}catch{}
-}
-try{cameraMode=localStorage.getItem('race-camera-v1')==='cockpit'?'cockpit':'chase';}catch{}
-setCameraMode(cameraMode);
+const cockpitView=createCockpit({
+  camera,
+  vehicleBody:body,
+  timing,
+  formatTime,
+  getSpeed:()=>speed,
+  cameraButton:$("camera-toggle")
+});
+let cameraMode=cockpitView.mode;
+const updateCockpitDisplay=rpm=>cockpitView.update(rpm);
 // Source and authorship follow the official Three.js car example.
 // The example model remains externally hosted; no asset licence is inferred.
 const draco = new DRACOLoader();
@@ -370,7 +270,7 @@ $('demo').onclick=()=>{
 };
 $('recover').onclick=()=>recover();
 $('restart').onclick=()=>recover(true);
-$('camera-toggle').onclick=()=>setCameraMode(cameraMode==='chase'?'cockpit':'chase');
+$('camera-toggle').onclick=()=>{cockpitView.toggle();cameraMode=cockpitView.mode;};
 $('setup-toggle').onclick=()=>{
   $('setup').hidden=!$('setup').hidden;
   $('setup-toggle').setAttribute('aria-expanded',String(!$('setup').hidden));
@@ -458,7 +358,7 @@ $('volume').oninput=()=>{audio.volume=Number($('volume').value);};
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch{}};
 addEventListener('keydown',e=>{
   if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
-  if(e.code==='KeyC'&&!e.repeat)setCameraMode(cameraMode==='chase'?'cockpit':'chase');
+  if(e.code==='KeyC'&&!e.repeat){cockpitView.toggle();cameraMode=cockpitView.mode;}
   if(e.code==='KeyR'&&!e.repeat)recover();
   if(!demo)return;
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD'].includes(e.code)){e.preventDefault();keys.add(e.code);}
@@ -565,7 +465,7 @@ function animate(now) {
     camera.fov=smooth(camera.fov,58,5,elapsed);
   }
   camera.updateProjectionMatrix();
-  steeringWheel.rotation.z=-steer*1.45;
+  cockpitView.steeringWheel.rotation.z=-steer*1.45;
   sun.position.set(carState.x-45,65,carState.z-35);sun.target.position.set(carState.x,0,carState.z);
   sky.position.set(carState.x,0,carState.z);
   scenery.update(elapsed);

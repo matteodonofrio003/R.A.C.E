@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { nearestTrack, clamp } from './racing-core.mjs';
+import { nearestTrack, clamp } from '../core/racing-core.mjs';
 import { landscapeMaterial, treeTexture } from './racing-materials.mjs';
 
 /* Static, instanced scenery: no per-frame geometry allocation. */

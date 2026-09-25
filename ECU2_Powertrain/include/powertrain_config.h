@@ -1,0 +1,12 @@
+#ifndef RACE_POWERTRAIN_CONFIG_H
+#define RACE_POWERTRAIN_CONFIG_H
+
+#define ECU_LINK_BAUD             115200U
+#define TELEMETRY_LINK_BAUD       38400U
+#define COCKPIT_TIMEOUT_MS         250U
+#define FEEDBACK_TIMEOUT_MS        500U
+#define PHYSICS_PERIOD_MS           10U
+#define TELEMETRY_PERIOD_MS         20U
+#define VEHICLE_SPEED_LIMIT_KMH  360.0f
+
+#endif

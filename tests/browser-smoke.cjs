@@ -14,7 +14,7 @@ const root = path.resolve(__dirname, '..');
     if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
     fs.readFile(file, (error, bytes) => {
       if (error) { res.writeHead(404).end(); return; }
-      const mime={'.html':'text/html','.mjs':'text/javascript','.jpg':'image/jpeg','.hdr':'application/octet-stream'};
+      const mime={'.html':'text/html','.mjs':'text/javascript','.css':'text/css','.jpg':'image/jpeg','.hdr':'application/octet-stream'};
       res.setHeader('Content-Type',mime[path.extname(file)]||'application/octet-stream');
       res.end(bytes);
     });

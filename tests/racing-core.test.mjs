@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeTelemetry, driveStep, nearestTrack, LapTimer, formatTime, shapeSteering, calibrateSteering, approachSteering, SessionReset } from '../racing-core.mjs';
+import { decodeTelemetry, driveStep, nearestTrack, LapTimer, formatTime, shapeSteering, calibrateSteering, approachSteering, SessionReset } from '../game/js/core/racing-core.mjs';
 
 test('v3 telemetry validates boundaries and rejects legacy or malformed frames', () => {
   const frame = { speed: 360, steer: -100, rpm: 8000, gear: 1, cockpit: true, session: 65535, feedback: true, alarm: false };

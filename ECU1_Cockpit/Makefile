@@ -77,7 +77,7 @@ CPPSRC = $(ALLCPPSRC)
 ASMSRC = $(ALLASMSRC)
 ASMXSRC = $(ALLXASMSRC)
 
-INCDIR = $(CONFDIR) $(ALLINC) $(TESTINC) $(CHIBIOS)/os/hal/lib/streams
+INCDIR = $(CONFDIR) ./include $(ALLINC) $(TESTINC) $(CHIBIOS)/os/hal/lib/streams
 CWARN = -Wall -Wextra -Wundef -Wstrict-prototypes -Wcast-align=strict
 CPPWARN = -Wall -Wextra -Wundef
 
